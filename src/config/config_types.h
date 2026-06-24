@@ -1020,6 +1020,7 @@ struct BrightnessMonitorOverride {
 
 struct BrightnessConfig {
   bool enableDdcutil = false;
+  bool syncBrightnessOfAllMonitors = false;
   std::vector<std::string> ddcutilIgnoreMmids;
   std::vector<BrightnessMonitorOverride> monitorOverrides;
   float minimumBrightness = 0.0f;
