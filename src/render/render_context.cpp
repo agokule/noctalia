@@ -6,9 +6,9 @@
 #include "render/backend/render_backend.h"
 #include "render/core/texture_handle.h"
 #include "render/core/texture_manager.h"
-#include "render/gl_shared_context.h"
 #include "render/render_target.h"
 #include "render/scene/audio_spectrum_node.h"
+#include "render/scene/countdown_ring_node.h"
 #include "render/scene/effect_node.h"
 #include "render/scene/fancy_audio_visualizer_node.h"
 #include "render/scene/glyph_node.h"
@@ -407,6 +407,13 @@ void RenderContext::renderNode(
     auto style = spinner->style();
     style.color.a *= effectiveOpacity;
     m_backend->drawSpinner(sw, sh, node->width(), node->height(), style, worldTransform);
+    break;
+  }
+  case NodeType::CountdownRing: {
+    const auto* ring = static_cast<const CountdownRingNode*>(node);
+    auto style = ring->style();
+    style.color.a *= effectiveOpacity;
+    m_backend->drawCountdownRing(sw, sh, node->width(), node->height(), style, worldTransform);
     break;
   }
   case NodeType::ScreenCorner: {

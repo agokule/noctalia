@@ -12,6 +12,7 @@
 #include "shell/settings/settings_registry.h"
 #include "shell/settings/widget_add_popup.h"
 #include "ui/controls/context_menu_popup.h"
+#include "ui/controls/roving_list_nav.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/select_dropdown_popup.h"
 #include "ui/dialogs/layer_popup_host.h"
@@ -33,6 +34,7 @@ class CompositorPlatform;
 class DependencyService;
 class Flex;
 class IdleManager;
+class Input;
 class Label;
 class RenderContext;
 class UPowerService;
@@ -44,7 +46,6 @@ struct wl_surface;
 
 namespace settings {
   struct SettingsContentContext;
-  class SettingsControlFactory;
 } // namespace settings
 
 // Standalone xdg-toplevel settings UI (same binary as the shell; shares RenderContext).
@@ -122,6 +123,8 @@ private:
   void refreshPluginListIfNeeded();
   void maybeOpenPendingWidgetInspector();
   void applyPendingContentScrollTarget(float margin);
+  void scrollFocusedAreaIntoView(class InputArea* area);
+  void scrollSidebarNodeIntoView(const Node* node);
   void clearStatusMessage();
   void clearTransientSettingsState();
   void openActionsMenu();
@@ -196,6 +199,8 @@ private:
   Button* m_actionsMenuButton = nullptr;
   Flex* m_contentContainer = nullptr;
   ScrollView* m_contentScrollView = nullptr;
+  ScrollView* m_sidebarScrollView = nullptr;
+  RovingListNavHost* m_sidebarNav = nullptr;
   std::unique_ptr<ContextMenuPopup> m_actionsMenuPopup;
   std::unique_ptr<settings::WidgetAddPopup> m_widgetAddPopup;
   std::unique_ptr<settings::ConfigExportDialogPopup> m_configExportDialogPopup;
@@ -216,6 +221,7 @@ private:
   bool m_rebuildRequested = false;
   bool m_contentRebuildRequested = false;
   bool m_focusSearchOnRebuild = false;
+  Input* m_settingsSearchInput = nullptr;
   bool m_scrollToPendingContentTarget = false;
   Node* m_pendingContentScrollTarget = nullptr;
   std::string m_searchQuery;

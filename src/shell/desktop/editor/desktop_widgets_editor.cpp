@@ -8,9 +8,10 @@
 #include "core/log.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "i18n/i18n.h"
-#include "pipewire/pipewire_spectrum.h"
+#include "render/backend/render_backend.h"
 #include "render/core/color.h"
 #include "render/core/shared_texture_cache.h"
+#include "render/core/texture_manager.h"
 #include "render/core/wallpaper_types.h"
 #include "render/render_context.h"
 #include "render/scene/input_area.h"
@@ -341,12 +342,15 @@ void DesktopWidgetsEditor::syncSurfaces() {
   const auto& outputs = m_wayland->outputs();
   std::erase_if(m_surfaces, [&outputs](const auto& surface) {
     return std::none_of(outputs.begin(), outputs.end(), [&surface](const auto& output) {
-      return output.done && output.output != nullptr && desktop_widgets::outputKey(output) == surface->outputName;
+      return output.done
+          && output.output != nullptr
+          && output.hasUsableGeometry()
+          && desktop_widgets::outputKey(output) == surface->outputName;
     });
   });
 
   for (const auto& output : outputs) {
-    if (!output.done || output.output == nullptr) {
+    if (!output.done || output.output == nullptr || !output.hasUsableGeometry()) {
       continue;
     }
     const std::string key = desktop_widgets::outputKey(output);
@@ -367,10 +371,8 @@ void DesktopWidgetsEditor::createSurface(const WaylandOutput& output) {
       .height = 0,
       .exclusiveZone = -1,
       .keyboard = LayerShellKeyboard::OnDemand,
-      .defaultWidth = output.logicalWidth > 0 ? static_cast<std::uint32_t>(output.logicalWidth)
-                                              : static_cast<std::uint32_t>(std::max(1, output.width)),
-      .defaultHeight = output.logicalHeight > 0 ? static_cast<std::uint32_t>(output.logicalHeight)
-                                                : static_cast<std::uint32_t>(std::max(1, output.height)),
+      .defaultWidth = static_cast<std::uint32_t>(output.effectiveLogicalWidth()),
+      .defaultHeight = static_cast<std::uint32_t>(output.effectiveLogicalHeight()),
   };
 
   auto overlay = std::make_unique<OverlaySurface>();
@@ -575,6 +577,11 @@ void DesktopWidgetsEditor::prepareFrame(OverlaySurface& surface, bool needsUpdat
       if (view.widget == nullptr || view.transformNode == nullptr) {
         continue;
       }
+      // During a scale drag, re-fit only the dragged widget; the others don't change, and skipping
+      // them keeps the per-frame relayout cheap.
+      if (m_drag.mode == DragMode::Scale && id != m_drag.widgetId) {
+        continue;
+      }
       view.widget->layout(*m_renderContext);
       const float w = std::max(1.0f, view.widget->intrinsicWidth());
       const float h = std::max(1.0f, view.widget->intrinsicHeight());
@@ -597,6 +604,13 @@ void DesktopWidgetsEditor::prepareFrame(OverlaySurface& surface, bool needsUpdat
 
   if (surface.wallpaperPreviewActive) {
     updateWallpaperPreview(surface);
+  }
+
+  const bool needsFrameTick = std::any_of(surface.views.begin(), surface.views.end(), [](const auto& entry) {
+    return entry.second.widget != nullptr && entry.second.widget->needsFrameTick();
+  });
+  if (needsFrameTick) {
+    surface.surface->requestFrameTick();
   }
 }
 
@@ -1143,7 +1157,7 @@ void DesktopWidgetsEditor::rebuildScene(OverlaySurface& surface) {
                   }),
                   ui::button({
                       .glyph = "settings",
-                      .enabled = hasSelectedWidget && !selectedIsLoginBox,
+                      .enabled = hasSelectedWidget,
                       .selected = m_inspectorOpen,
                       .variant = ButtonVariant::Outline,
                       .tooltip = i18n::tr("desktop-widgets.editor.actions.settings"),
@@ -1186,6 +1200,7 @@ void DesktopWidgetsEditor::rebuildScene(OverlaySurface& surface) {
                       {
                           .text = m_snapshot.grid.visible ? i18n::tr("desktop-widgets.editor.state.grid-on")
                                                           : i18n::tr("desktop-widgets.editor.state.grid-off"),
+                          .controlHeight = Style::controlHeightSm,
                           .selected = m_snapshot.grid.visible,
                           .variant = ButtonVariant::Outline,
                           .onClick =
@@ -1216,6 +1231,7 @@ void DesktopWidgetsEditor::rebuildScene(OverlaySurface& surface) {
                   ),
                   ui::button({
                       .text = i18n::tr("desktop-widgets.editor.actions.done"),
+                      .controlHeight = Style::controlHeightSm,
                       .variant = ButtonVariant::Secondary,
                       .onClick = [this]() { requestExit(); },
                   })
@@ -1403,6 +1419,42 @@ void DesktopWidgetsEditor::updateViewTransforms(const std::string* relayoutWidge
   }
 }
 
+void DesktopWidgetsEditor::applyScaleDragPreview(const DesktopWidgetState& state) {
+  EditorWidgetView* view = findView(m_drag.widgetId);
+  if (view == nullptr || view->widget == nullptr || view->transformNode == nullptr) {
+    return;
+  }
+
+  view->intrinsicWidth = std::max(1.0f, state.boxWidth);
+  view->intrinsicHeight = std::max(1.0f, state.boxHeight);
+
+  // Handles and the tile follow the cursor immediately; the content re-fits via a real layout in
+  // prepareFrame, coalesced to one per frame from the pointer-move stream.
+  view->widget->setBox(state.boxWidth, state.boxHeight);
+
+  float flipScaleX = 1.0f;
+  float flipScaleY = 1.0f;
+  desktop_widgets::widgetNodeScale(state, flipScaleX, flipScaleY);
+
+  view->transformNode->setFrameSize(view->intrinsicWidth, view->intrinsicHeight);
+  view->transformNode->setPosition(state.cx - view->intrinsicWidth * 0.5f, state.cy - view->intrinsicHeight * 0.5f);
+  view->transformNode->setRotation(state.rotationRad);
+  view->transformNode->setScale(flipScaleX, flipScaleY);
+  view->transformNode->setOpacity(state.enabled ? 1.0f : kDisabledWidgetOpacity);
+
+  OverlaySurface* dragSurface = findSurfaceForWidget(m_drag.widgetId);
+  for (auto& surface : m_surfaces) {
+    updateSelectionVisuals(*surface);
+  }
+
+  // Request a plain relayout of the dragged surface (re-fit content) — NOT the editor's
+  // requestLayout(), which rebuilds the whole scene every frame and would destroy the captured
+  // resize-handle node, dropping the pointer grab mid-drag.
+  if (dragSurface != nullptr && dragSurface->surface != nullptr) {
+    dragSurface->surface->requestLayout();
+  }
+}
+
 void DesktopWidgetsEditor::addWidget(const std::string& outputName, const std::string& type) {
   if (!m_open || m_wayland == nullptr) {
     return;
@@ -1412,10 +1464,8 @@ void DesktopWidgetsEditor::addWidget(const std::string& outputName, const std::s
   float centerY = 240.0f;
   if (const WaylandOutput* output = desktop_widgets::resolveEffectiveOutput(*m_wayland, outputName);
       output != nullptr) {
-    const int logicalWidth =
-        output->logicalWidth > 0 ? output->logicalWidth : output->width / std::max(1, output->scale);
-    const int logicalHeight =
-        output->logicalHeight > 0 ? output->logicalHeight : output->height / std::max(1, output->scale);
+    const int logicalWidth = output->effectiveLogicalWidth();
+    const int logicalHeight = output->effectiveLogicalHeight();
     centerX = static_cast<float>(std::max(1, logicalWidth)) * 0.5f;
     centerY = static_cast<float>(std::max(1, logicalHeight)) * 0.5f;
   }
@@ -1949,8 +1999,11 @@ void DesktopWidgetsEditor::updateDrag() {
     const float localX = wx * std::cos(-rot) - wy * std::sin(-rot);
     const float localY = wx * std::sin(-rot) + wy * std::cos(-rot);
 
-    float boxW = m_altHeld ? std::abs(localX) * 2.0f : std::abs(localX);
-    float boxH = m_altHeld ? std::abs(localY) * 2.0f : std::abs(localY);
+    // Corner-anchored resize uses the signed projection along the corner's direction so dragging
+    // past the fixed anchor clamps to the minimum size instead of flipping sign and growing again.
+    // Center-anchored (Alt) resize grows symmetrically in either direction, so it uses the magnitude.
+    float boxW = m_altHeld ? std::abs(localX) * 2.0f : signs.x * localX;
+    float boxH = m_altHeld ? std::abs(localY) * 2.0f : signs.y * localY;
 
     const float cell = static_cast<float>(std::max(1, m_snapshot.grid.cellSize));
     boxW = std::max(cell, boxW);
@@ -1990,10 +2043,10 @@ void DesktopWidgetsEditor::updateDrag() {
     desktop_widgets::clampStateToOutput(*m_wayland, *state, clampWidth, clampHeight);
   }
 
-  // For a resize, re-layout the dragged widget so its content re-fits the new box; otherwise
-  // just reposition the views.
+  // For a resize, preview the new box as a cheap GPU scale of the dragged widget (its content is
+  // re-fitted crisply once, on release, in finishDrag()); otherwise just reposition the views.
   if (m_drag.mode == DragMode::Scale) {
-    updateViewTransforms(&m_drag.widgetId);
+    applyScaleDragPreview(*state);
   } else {
     updateViewTransforms();
   }
@@ -2083,6 +2136,12 @@ bool DesktopWidgetsEditor::onPointerEvent(const PointerEvent& event) {
     break;
   case PointerEvent::Type::Motion:
     surface->inputDispatcher.pointerMotion(static_cast<float>(event.sx), static_cast<float>(event.sy), event.serial);
+    // An active drag tracks the pointer everywhere, not just while it stays over the handle's input
+    // area — otherwise dragging a scale handle outward (growing the widget) stops updating once the
+    // pointer leaves the handle.
+    if (m_drag.mode != DragMode::None) {
+      updateDrag();
+    }
     break;
   case PointerEvent::Type::Button:
     surface->inputDispatcher.pointerButton(
@@ -2240,12 +2299,13 @@ void DesktopWidgetsEditor::onSecondTick() {
     if (surface->surface == nullptr) {
       continue;
     }
-    const bool needsUpdate =
-        minuteBoundary || std::any_of(surface->views.begin(), surface->views.end(), [](const auto& entry) {
-          return entry.second.widget != nullptr && entry.second.widget->wantsSecondTicks();
-        });
-    if (needsUpdate) {
+    const bool wantsSecondTicks = std::any_of(surface->views.begin(), surface->views.end(), [](const auto& entry) {
+      return entry.second.widget != nullptr && entry.second.widget->wantsSecondTicks();
+    });
+    if (minuteBoundary) {
       surface->surface->requestUpdate();
+    } else if (wantsSecondTicks) {
+      surface->surface->requestUpdateOnly();
     }
   }
 }
@@ -2336,6 +2396,14 @@ void DesktopWidgetsEditor::requestLayout() {
     if (surface->surface != nullptr) {
       surface->sceneRebuildRequested = true;
       surface->surface->requestLayout();
+    }
+  }
+}
+
+void DesktopWidgetsEditor::requestUpdate() {
+  for (auto& surface : m_surfaces) {
+    if (surface->surface != nullptr) {
+      surface->surface->requestUpdateOnly();
     }
   }
 }

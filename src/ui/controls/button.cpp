@@ -1,5 +1,6 @@
 #include "ui/controls/button.h"
 
+#include "core/keybind_matcher.h"
 #include "render/animation/animation_manager.h"
 #include "render/core/renderer.h"
 #include "render/scene/input_area.h"
@@ -222,6 +223,17 @@ Button::Button() {
       m_onClick();
     }
   });
+  area->setFocusable(true);
+  area->setOnFocusGain([this]() { applyVisualState(); });
+  area->setOnFocusLoss([this]() { applyVisualState(); });
+  area->setOnKeyDown([this](const InputArea::KeyData& key) {
+    if (!key.pressed || !m_enabled || !m_onClick) {
+      return;
+    }
+    if (KeybindMatcher::matches(KeybindAction::Validate, key.sym, key.modifiers)) {
+      m_onClick();
+    }
+  });
   area->setEnabled(false);
   m_inputArea = static_cast<InputArea*>(addChild(std::move(area)));
   m_inputArea->setParticipatesInLayout(false);
@@ -268,6 +280,12 @@ void Button::setFontSize(float size) {
 void Button::setGlyphSize(float size) {
   ensureGlyph();
   m_glyph->setGlyphSize(size);
+}
+
+void Button::setControlHeight(float height) {
+  const float pinned = std::max(1.0f, height);
+  setMinHeight(pinned);
+  setMaxHeight(pinned);
 }
 
 void Button::setOnClick(std::function<void()> callback) {
@@ -326,6 +344,14 @@ void Button::setHoveredVisual(bool hovered) {
   applyVisualState();
 }
 
+void Button::setPressedVisual(bool pressed) {
+  if (m_pressedVisual == pressed) {
+    return;
+  }
+  m_pressedVisual = pressed;
+  applyVisualState();
+}
+
 void Button::setCursorShape(std::uint32_t shape) {
   if (m_inputArea != nullptr) {
     m_inputArea->setCursorShape(shape);
@@ -352,6 +378,20 @@ void Button::setTooltip(std::string_view text) {
   } else {
     m_inputArea->setTooltip(std::string(text));
   }
+}
+
+void Button::setTabStop(bool tabStop) {
+  if (m_inputArea != nullptr) {
+    m_inputArea->setTabStop(tabStop);
+  }
+}
+
+void Button::setKeyboardFocusHint(bool hint) {
+  if (m_keyboardFocusHint == hint) {
+    return;
+  }
+  m_keyboardFocusHint = hint;
+  applyVisualState();
 }
 
 void Button::ensureBadge() {
@@ -400,6 +440,7 @@ void Button::setSelected(bool selected) {
   }
   m_selected = selected;
   applyVisualState();
+  markPaintDirty();
 }
 
 void Button::setContentAlign(ButtonContentAlign align) { m_contentAlign = align; }
@@ -533,8 +574,17 @@ void Button::applyColors(const Color& bg, const Color& border, const Color& labe
 }
 
 void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Color& targetLabel) const {
+  const bool isKeyboardFocused = m_enabled && m_keyboardFocusHint;
+  const bool isInputFocused = m_enabled && m_inputArea != nullptr && m_inputArea->focused();
+  const bool keyboardNavFocus = isKeyboardFocused
+      && (m_variant == ButtonVariant::TabActive
+          || m_variant == ButtonVariant::Tab
+          || m_variant == ButtonVariant::Ghost);
   bool isHovered = m_enabled && (m_hoveredVisual || (!m_hoverSuppressed && hovered()));
-  bool isPressed = m_enabled && pressed();
+  if (isInputFocused && !keyboardNavFocus) {
+    isHovered = true;
+  }
+  bool isPressed = m_enabled && (m_pressedVisual || pressed());
   bool isSelected = m_enabled && m_selected;
 
   if (!m_enabled) {
@@ -549,6 +599,10 @@ void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Colo
     targetBg = resolveColorSpec(m_palette.selected->bg);
     targetBorder = resolveColorSpec(m_palette.selected->border);
     targetLabel = resolveColorSpec(m_palette.selected->label);
+  } else if (keyboardNavFocus) {
+    targetBg = resolveColorSpec(colorSpecFromRole(ColorRole::Secondary));
+    targetBorder = resolveColorSpec(clearColorSpec());
+    targetLabel = resolveColorSpec(colorSpecFromRole(ColorRole::OnSecondary));
   } else if (isHovered || isSelected) {
     targetBg = resolveColorSpec(m_palette.hover.bg);
     targetBorder = resolveColorSpec(m_palette.hover.border);
@@ -646,14 +700,14 @@ void Button::doLayout(Renderer& renderer) {
   // Buttons are often sized by a parent stretch pass. Preserve that assigned
   // box instead of collapsing back to intrinsic content width.
   if (assignedWidth > 0.0f || assignedHeight > 0.0f) {
-    setSize(std::max(width(), assignedWidth), std::max(height(), assignedHeight));
+    setSizeFromLayout(std::max(width(), assignedWidth), std::max(height(), assignedHeight));
   }
 
   if (glyphOnly && m_contentAlign == ButtonContentAlign::Center) {
     const bool hasAssignedWidth = assignedWidth > 0.0f;
     if (!hasAssignedWidth) {
       const float squareSize = std::max(width(), height());
-      setSize(squareSize, squareSize);
+      setSizeFromLayout(squareSize, squareSize);
     }
   }
 

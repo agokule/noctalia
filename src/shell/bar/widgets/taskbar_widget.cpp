@@ -22,8 +22,6 @@
 #include "util/string_utils.h"
 #include "wayland/wayland_seat.h"
 #include "wayland/wayland_toplevels.h"
-
-struct ext_foreign_toplevel_handle_v1;
 #include "xdg-shell-client-protocol.h"
 
 #include <algorithm>
@@ -1833,7 +1831,9 @@ void TaskbarWidget::updateModels() {
       }
       return false;
     };
-    std::erase_if(nextWorkspaces, [&](const WorkspaceModel& wsm) { return !workspaceHasTask(wsm, nextTasks); });
+    std::erase_if(nextWorkspaces, [&](const WorkspaceModel& wsm) {
+      return !wsm.workspace.active && !workspaceHasTask(wsm, nextTasks);
+    });
   }
 
   if (!m_groupByWorkspace) {

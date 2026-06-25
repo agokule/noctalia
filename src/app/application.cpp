@@ -1,6 +1,6 @@
 #include "application.h"
 
-#include "app/poll_source.h"
+#include "app/main_loop.h"
 #include "compositors/compositor_detect.h"
 #include "config/config_types.h"
 #include "core/build_info.h"
@@ -10,12 +10,36 @@
 #include "core/process.h"
 #include "core/resource_paths.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "dbus/accounts/accounts_service.h"
+#include "dbus/bluetooth/bluetooth_agent.h"
+#include "dbus/bluetooth/bluetooth_service.h"
+#include "dbus/idle/screensaver_poll_source.h"
+#include "dbus/idle/screensaver_service.h"
+#include "dbus/logind/logind_service.h"
+#include "dbus/mpris/mpris_service.h"
+#include "dbus/network/inetwork_service.h"
 #include "dbus/network/network_manager_service.h"
+#include "dbus/network/network_secret_agent.h"
 #include "dbus/network/wpa_supplicant_service.h"
+#include "dbus/notification/kde_notification_client.h"
+#include "dbus/notification/notification_dbus_host.h"
+#include "dbus/notification/notification_service.h"
+#include "dbus/polkit/polkit_agent.h"
+#include "dbus/polkit/polkit_poll_source.h"
+#include "dbus/polkit/polkit_session_support.h"
+#include "dbus/power/power_profiles_service.h"
+#include "dbus/session_bus.h"
+#include "dbus/session_bus_poll_source.h"
+#include "dbus/system_bus.h"
+#include "dbus/system_bus_poll_source.h"
+#include "dbus/tray/tray_service.h"
+#include "dbus/upower/upower_service.h"
+#include "debug/debug_service.h"
 #include "i18n/i18n.h"
 #include "i18n/i18n_service.h"
 #include "ipc/ipc_arg_parse.h"
 #include "launcher/app_provider.h"
+#include "launcher/dmenu_provider.h"
 #include "launcher/emoji_provider.h"
 #include "launcher/math_provider.h"
 #include "launcher/plugin_launcher_provider.h"
@@ -23,16 +47,27 @@
 #include "launcher/wallpaper_provider.h"
 #include "launcher/window_provider.h"
 #include "notification/notifications.h"
+#include "pipewire/pipewire_poll_source.h"
+#include "pipewire/pipewire_service.h"
+#include "pipewire/pipewire_spectrum.h"
+#include "pipewire/pipewire_spectrum_poll_source.h"
+#include "pipewire/sound_player.h"
 #include "render/animation/motion_service.h"
+#include "render/backend/render_backend.h"
 #include "render/core/texture_manager.h"
 #include "render/text/font_weight_catalog.h"
+#include "scripting/plugin_ipc.h"
 #include "scripting/plugin_manifest.h"
+#include "scripting/plugin_panel_shell.h"
 #include "scripting/plugin_registry.h"
+#include "scripting/plugin_runtime_context.h"
 #include "shell/clipboard/clipboard_panel.h"
 #include "shell/clipboard/clipboard_paste.h"
 #include "shell/control_center/control_center_panel.h"
 #include "shell/greeter/greeter_appearance_sync.h"
 #include "shell/launcher/launcher_panel.h"
+#include "shell/panel/plugin_panel.h"
+#include "shell/polkit/polkit_panel.h"
 #include "shell/session/session_ipc.h"
 #include "shell/session/session_panel.h"
 #include "shell/setup_wizard/setup_wizard_panel.h"
@@ -40,7 +75,12 @@
 #include "shell/tooltip/tooltip_manager.h"
 #include "shell/tray/tray_drawer_panel.h"
 #include "shell/wallpaper/panel/wallpaper_panel.h"
+#include "shell/wallpaper/wallpaper_paths.h"
+#include "system/brightness_poll_source.h"
+#include "system/brightness_service.h"
 #include "system/distro_info.h"
+#include "system/easyeffects_service.h"
+#include "system/system_monitor_service.h"
 #include "ui/app_icon_colorization.h"
 #include "ui/controls/input.h"
 #include "ui/dialogs/color_picker_dialog.h"
@@ -376,6 +416,10 @@ void Application::installNotificationBusNameWatch() {
   m_notificationBusNameWatchInstalled = true;
 }
 
+bool Application::likelySupportsInSessionPolkit() const noexcept {
+  return polkit_session::likelySupportsInSessionPolkitAgent(m_logindService != nullptr);
+}
+
 void Application::syncPolkitAgent() {
   if (m_systemBus == nullptr) {
     m_polkitPollSource.reset();
@@ -414,7 +458,13 @@ void Application::syncPolkitAgent() {
   m_polkitAgent->setReadyCallback([this](bool ok, const std::string& error) {
     if (!ok) {
       kLog.warn("polkit agent disabled: {}", error);
-      DeferredCall::callLater([this]() {
+      DeferredCall::callLater([this, error]() {
+        if (polkit_session::isNoSessionForPidError(error)) {
+          notify::error(
+              "Noctalia", i18n::tr("notifications.internal.polkit-agent"),
+              i18n::tr("notifications.internal.polkit-no-session")
+          );
+        }
         m_polkitPollSource.reset();
         m_polkitAgent.reset();
       });
@@ -494,6 +544,11 @@ void Application::run(std::function<void()> startupReadyCallback) {
   });
   runStartupPhase("initUi", [this]() { initUi(); });
   runStartupPhase("initPluginServices", [this]() {
+    // Outputs are enumerated by now (wallpaper created its surfaces in initUi); refresh
+    // the script-visible output snapshot before any service/panel reads noctalia.outputs().
+    if (m_syncScriptApiOutputs) {
+      m_syncScriptApiOutputs();
+    }
     m_pluginServiceHost.start(m_configService.config().plugins.pluginSettings);
     // Reconcile services when plugin settings change (start new, stop removed, re-seed
     // changed). Guarded by the plugins change flag so unrelated reloads don't churn.
@@ -501,17 +556,24 @@ void Application::run(std::function<void()> startupReadyCallback) {
       if (m_configService.lastChange().plugins) {
         m_pluginServiceHost.refresh(m_configService.config().plugins.pluginSettings);
         reloadPluginLauncherProviders();
+        reloadPluginPanels();
         m_settingsWindow.onPluginsChanged();
       }
     });
-    // A git update() advances a source without a config change, so it bypasses the
-    // reload path: rebuild the bar and reconcile services for the new revision.
+    // Plugins materialized after the bar was built (first-run clone/export) or a git
+    // update() advance a source without a config change, so they bypass the config-reload
+    // path. reload() rebuilds the bar widget tree against the now-populated registry —
+    // refresh() only repaints, leaving newly available plugin widgets uncreated.
     m_pluginManager.setOnChanged([this]() {
       m_pluginServiceHost.refresh(m_configService.config().plugins.pluginSettings);
-      m_bar.refresh();
+      m_bar.reload();
       reloadPluginLauncherProviders();
+      reloadPluginPanels();
       m_settingsWindow.onPluginsChanged();
     });
+    // A git-source enable exports on a worker thread; redraw the plugins list so the
+    // row swaps between its spinner and toggle as the export starts and finishes.
+    m_pluginManager.setOnEnablingChanged([this]() { m_settingsWindow.onPluginsChanged(); });
   });
   runStartupPhase("initIpc", [this]() { initIpc(); });
   runStartupPhase("buildPollSources", [this]() { (void)buildPollSources(); });
@@ -618,12 +680,50 @@ void Application::initServices() {
   });
 
   // Apply theme before any UI constructs palette-dependent scene nodes.
-  m_themeService.setResolvedCallback([this, lastResolvedThemeMode = std::optional<std::string>{}](
+  auto syncScriptApiWallpaperDirectory = [this]() {
+    const ThemeMode mode = m_themeService.resolvedMode() == "light" ? ThemeMode::Light : ThemeMode::Dark;
+    m_scriptApi.setWallpaperDirectory(
+        wallpaper::resolveGlobalWallpaperDirectory(m_configService.config().wallpaper, mode)
+    );
+  };
+
+  // Publish the connected outputs to plugin scripts (noctalia.outputs()), refreshed on every
+  // output change so the worker-thread binding reads a race-free copy.
+  m_syncScriptApiOutputs = [this]() {
+    std::vector<scripting::ScriptOutputInfo> infos;
+    wl_output* const focused = m_compositorPlatform.preferredInteractiveOutput();
+    for (const auto& out : m_wayland.outputs()) {
+      if (!out.done || out.connectorName.empty()) {
+        continue;
+      }
+      infos.push_back({
+          .name = out.connectorName,
+          .description = out.description,
+          .width = out.effectiveLogicalWidth(),
+          .height = out.effectiveLogicalHeight(),
+          .x = out.logicalX,
+          .y = out.logicalY,
+          .scale = out.scale,
+          .focused = out.output == focused,
+      });
+    }
+    m_scriptApi.setOutputs(std::move(infos));
+  };
+  m_syncScriptApiOutputs();
+
+  // Let a plugin (e.g. mpvpaper) take over an output's wallpaper surface.
+  m_scriptApi.setWallpaperEnabledHook([this](const std::string& connector, bool enabled) {
+    m_wallpaper.setOutputExternallyManaged(connector, !enabled);
+  });
+
+  m_themeService.setResolvedCallback([this, lastResolvedThemeMode = std::optional<std::string>{},
+                                      syncScriptApiWallpaperDirectory](
                                          const noctalia::theme::GeneratedPalette& generated, std::string_view mode
                                      ) mutable {
     const std::string resolvedMode(mode);
     const std::string configuredMode(enumToKey(kThemeModes, m_themeService.configuredMode()));
     m_scriptApi.setDarkMode(resolvedMode != "light");
+    syncScriptApiWallpaperDirectory();
     m_templateApplyService.apply(generated, mode);
     m_hookManager.fire(HookKind::ColorsChanged);
     if (lastResolvedThemeMode.has_value() && *lastResolvedThemeMode != resolvedMode) {
@@ -637,7 +737,9 @@ void Application::initServices() {
     lastResolvedThemeMode = resolvedMode;
   });
   m_themeService.apply();
+  syncScriptApiWallpaperDirectory();
   m_configService.addReloadCallback([this]() { m_themeService.onConfigReload(); }, "theme");
+  m_configService.addReloadCallback(syncScriptApiWallpaperDirectory, "wallpaper");
   {
     static ShellAppIconColorizationSettings lastAppIconColorization =
         shellAppIconColorizationSettings(m_configService.config().shell);
@@ -686,16 +788,22 @@ void Application::initServices() {
   KeybindMatcher::setMatcher(KeybindAction::Right, bindKeybind(KeybindAction::Right));
   KeybindMatcher::setMatcher(KeybindAction::Up, bindKeybind(KeybindAction::Up));
   KeybindMatcher::setMatcher(KeybindAction::Down, bindKeybind(KeybindAction::Down));
+  KeybindMatcher::setMatcher(KeybindAction::TabNext, bindKeybind(KeybindAction::TabNext));
+  KeybindMatcher::setMatcher(KeybindAction::TabPrevious, bindKeybind(KeybindAction::TabPrevious));
 
   Input::setValidateKeyMatcher([this](std::uint32_t sym, std::uint32_t modifiers) {
     return m_configService.matchesKeybind(KeybindAction::Validate, sym, modifiers);
   });
 
   m_wayland.setOutputChangeCallback([this]() {
+    if (m_syncScriptApiOutputs) {
+      m_syncScriptApiOutputs();
+    }
     if (m_brightnessService != nullptr) {
       m_brightnessService->onOutputsChanged();
     }
     m_gammaService.onOutputsChanged();
+    m_pluginServiceHost.onOutputChange();
     m_wallpaper.onOutputChange();
     m_backdrop.onOutputChange();
     m_bar.onOutputChange();
@@ -718,6 +826,7 @@ void Application::initServices() {
     }
   });
   m_compositorPlatform.setWorkspaceChangeCallback([this]() {
+    m_bar.onWorkspaceChanged();
     m_bar.refresh();
     m_windowSwitcher.onToplevelChange();
   });
@@ -800,14 +909,25 @@ void Application::initServices() {
 
   // Register all wallpaper consumers in the single-callback slot.
   m_configService.setWallpaperChangeCallback([this]() {
-    m_wallpaper.onStateChange();
+    const auto wallpaperChanges = m_wallpaper.onStateChange();
     m_backdrop.onStateChange();
     m_lockScreen.onWallpaperChanged();
     m_themeService.onWallpaperChange();
     if (m_panelManager.isOpenPanel("control-center")) {
       m_panelManager.refresh();
     }
-    m_hookManager.fire(HookKind::WallpaperChanged);
+    const auto fireWallpaperChangedHook = [this](const std::string& path, const std::string& connector) {
+      m_hookManager.fire(
+          HookKind::WallpaperChanged, {{"NOCTALIA_WALLPAPER_PATH", path}, {"NOCTALIA_WALLPAPER_CONNECTOR", connector}}
+      );
+    };
+    if (wallpaperChanges.empty()) {
+      fireWallpaperChangedHook(m_configService.getPaletteWallpaperPath(), {});
+    } else {
+      for (const auto& change : wallpaperChanges) {
+        fireWallpaperChangedHook(change.path, change.connector);
+      }
+    }
   });
 
   m_themeService.setChangeCallback([this]() {
@@ -1186,6 +1306,7 @@ void Application::initServices() {
       m_configService.addReloadCallback(applyMprisConfig);
       m_mprisService->setChangeCallback([this, shouldRefreshControlCenter]() {
         m_bar.refresh();
+        m_desktopWidgetsController.requestUpdate();
         m_mediaOsd.onMprisChanged(*m_mprisService);
         if (shouldRefreshControlCenter()) {
           m_panelManager.refresh();
@@ -1325,22 +1446,75 @@ void Application::initUi() {
     }
   });
   m_settingsWindow.setSyncGreeterAppearance([this]() {
-    (void)greeter::syncAppearanceToGreeterAsync(
-        m_configService, m_themeService.resolvedMode(),
-        [this](bool success) {
-          DeferredCall::callLater([this, success]() {
-            if (success) {
-              notify::info(
-                  "Noctalia", i18n::tr("notifications.internal.greeter-sync"),
-                  i18n::tr("notifications.internal.greeter-sync-success")
-              );
-              return;
-            }
-            m_settingsWindow.markSettingsWriteError(i18n::tr("settings.errors.sync-greeter"));
-          });
-        },
-        &m_compositorPlatform
+    const std::uint64_t generation = ++m_greeterSyncGeneration;
+    m_greeterSyncTimeoutTimer.stop();
+
+    const auto complete = [this, generation](bool success) {
+      if (generation != m_greeterSyncGeneration) {
+        return;
+      }
+      m_greeterSyncTimeoutTimer.stop();
+      DeferredCall::callLater([this, success]() {
+        if (success) {
+          notify::info(
+              "Noctalia", i18n::tr("notifications.internal.greeter-sync"),
+              i18n::tr("notifications.internal.greeter-sync-success")
+          );
+          return;
+        }
+        m_settingsWindow.markSettingsWriteError(i18n::tr("settings.errors.sync-greeter"));
+      });
+    };
+
+    if (m_configService.config().shell.polkitAgent && m_polkitAgent != nullptr) {
+      m_polkitAgent->markNextRequestInternal();
+    }
+    const auto launch = greeter::syncAppearanceToGreeterAsync(
+        m_configService, m_themeService.resolvedMode(), complete, &m_compositorPlatform, m_logindService != nullptr
     );
+    if (launch == greeter::GreeterSyncLaunch::Failed) {
+      m_settingsWindow.markSettingsWriteError(i18n::tr("settings.errors.sync-greeter"));
+      return;
+    }
+    if (launch == greeter::GreeterSyncLaunch::StagedOnly) {
+      notify::info(
+          "Noctalia", i18n::tr("notifications.internal.greeter-sync"),
+          i18n::tr("notifications.internal.greeter-sync-pending-manual")
+      );
+      return;
+    }
+
+    const bool customPrivilege =
+        !StringUtils::trim(m_configService.config().shell.greeterSync.privilegeCommand).empty();
+    const bool polkitAgentActive = m_configService.config().shell.polkitAgent && m_polkitAgent != nullptr;
+    const bool inSessionPolkit = likelySupportsInSessionPolkit();
+    const char* pendingBodyKey = "notifications.internal.greeter-sync-pending";
+    if (!customPrivilege && !polkitAgentActive && !inSessionPolkit) {
+      pendingBodyKey = "notifications.internal.greeter-sync-pending-manual";
+    } else if (!customPrivilege && !polkitAgentActive) {
+      pendingBodyKey = "notifications.internal.greeter-sync-pending-console";
+    }
+    notify::info("Noctalia", i18n::tr("notifications.internal.greeter-sync"), i18n::tr(pendingBodyKey));
+
+    m_greeterSyncTimeoutTimer.start(std::chrono::seconds(90), [this, generation, inSessionPolkit]() {
+      if (generation != m_greeterSyncGeneration) {
+        return;
+      }
+      DeferredCall::callLater([this, inSessionPolkit]() {
+        notify::error(
+            "Noctalia", i18n::tr("notifications.internal.greeter-sync"),
+            i18n::tr(
+                inSessionPolkit ? "notifications.internal.greeter-sync-timeout"
+                                : "notifications.internal.greeter-sync-timeout-manual"
+            )
+        );
+        m_settingsWindow.markSettingsWriteError(
+            i18n::tr(
+                inSessionPolkit ? "settings.errors.sync-greeter-timeout" : "settings.errors.sync-greeter-timeout-manual"
+            )
+        );
+      });
+    });
   });
   m_settingsWindow.setSaveWallpaperPaletteAsCustom([this]() {
     std::string paletteName;
@@ -1535,11 +1709,16 @@ void Application::initUi() {
       &m_clipboardService, &m_configService, &m_thumbnailService, &m_asyncTextureCache
   );
   clipboardPanel->setActivateCallback([this](const ClipboardEntry& entry) {
-    m_panelManager.close();
     const ClipboardAutoPasteMode mode = m_configService.config().shell.clipboardAutoPaste;
     if (mode == ClipboardAutoPasteMode::Off) {
+      m_panelManager.close();
       return;
     }
+    // Auto-paste injects a keystroke into whatever holds keyboard focus. The animated close keeps
+    // the panel surface (and its keyboard focus) alive for the duration of the reveal animation, so
+    // the keys would land on the closing panel instead of the target window. Close without animation
+    // so focus returns to the toplevel before we paste, mirroring the launcher's app-launch close.
+    m_panelManager.closePanel(false);
     const bool isImage = entry.isImage();
     m_clipboardAutoPasteTimer.stop();
     m_clipboardAutoPasteTimer.start(std::chrono::milliseconds(Style::animFast + 30), [this, isImage]() {
@@ -1582,6 +1761,7 @@ void Application::initUi() {
           .wallpaper = &m_wallpaper,
           .calendar = &m_calendarService,
           .scriptApi = &m_scriptApi,
+          .fileWatcher = &m_fileWatcher,
           .clipboard = &m_clipboardService,
           .accounts = m_accountsService.get(),
           .thumbnails = &m_thumbnailService,
@@ -1615,6 +1795,8 @@ void Application::initUi() {
     );
   });
   reloadPluginLauncherProviders();
+  reloadDmenuProviders();
+  reloadPluginPanels();
   m_overviewLauncherCapture.initialize(m_wayland, &m_renderContext, m_compositorPlatform, m_panelManager);
   m_overviewLauncherCapture.setEnabled(m_configService.config().shell.niriOverviewTypeToLaunchEnabled);
   m_overviewLauncherCapture.setOpenLauncherCallback(
@@ -1816,6 +1998,9 @@ void Application::initUi() {
   m_panelManager.setAttachedPanelAvailabilityCallback([this](wl_output* output, std::string_view barName) {
     return m_bar.canAttachPanelToBar(output, barName);
   });
+  m_panelManager.setAttachedPanelLayerProvider([this](wl_output* output, std::string_view barName) {
+    return m_bar.layerForBar(output, barName);
+  });
   m_panelManager.setAttachedPanelBarSettledCallback([this](wl_output* output, std::string_view barName) {
     return m_bar.isAttachedPanelBarSettled(output, barName);
   });
@@ -1828,6 +2013,11 @@ void Application::initUi() {
   // When config reloads, refresh any open panel: bar-driven attached decoration restyle and
   // shell-driven compositor blur.
   m_configService.addReloadCallback([this]() { m_panelManager.onConfigReloaded(); });
+  m_configService.addReloadCallback([this]() {
+    if (m_configService.lastChange().shell) {
+      reloadDmenuProviders();
+    }
+  });
   m_configService.addReloadCallback([this]() { m_screenCorners.onConfigReload(); });
 
   m_layerPopupHosts.registerHost(
@@ -2050,12 +2240,80 @@ void Application::reloadPluginLauncherProviders() {
   }
 }
 
+void Application::reloadDmenuProviders() {
+  if (m_launcherPanel == nullptr) {
+    return;
+  }
+  m_launcherPanel->clearProvidersWithIdPrefix("dmenu.");
+  for (const auto& entry : m_configService.config().shell.launcher.dmenu.entries) {
+    if (entry.command.empty()) {
+      logWarn("dmenu[{}]: missing command, skipping", entry.id);
+      continue;
+    }
+    if (entry.prefix.value_or("").empty() && !entry.global) {
+      logWarn("dmenu[{}]: no prefix and global=false; unreachable until configured", entry.id);
+    }
+    m_launcherPanel->addProvider(std::make_unique<DmenuProvider>(entry, &m_clipboardService));
+  }
+}
+
+void Application::reloadPluginPanels() {
+  // Retire the previously registered plugin panels (closing any that are open),
+  // then register the current enabled set under their canonical full ids.
+  for (const auto& id : m_pluginPanelIds) {
+    m_panelManager.unregisterPanel(id);
+  }
+  m_pluginPanelIds.clear();
+
+  auto& registry = scripting::PluginRegistry::instance();
+  const auto& pluginSettings = m_configService.config().plugins.pluginSettings;
+  static const std::unordered_map<std::string, WidgetSettingValue> kNoOverrides;
+
+  for (const auto& resolved : registry.entriesOfKind(scripting::PluginEntryKind::Panel)) {
+    if (resolved.entry == nullptr || resolved.manifest == nullptr) {
+      continue;
+    }
+    // Panels are singletons: plugin_settings holds both plugin-level and entry-level keys.
+    const auto psIt = pluginSettings.find(resolved.manifest->id);
+    const auto& overrides = psIt != pluginSettings.end() ? psIt->second : kNoOverrides;
+    auto seeded = scripting::seedEntrySettings(*resolved.entry, overrides);
+    scripting::mergePluginSettings(*resolved.manifest, overrides, seeded);
+    const auto shellConfig = scripting::resolvePluginPanelShellConfig(*resolved.entry, seeded);
+
+    std::string fullId = resolved.fullId();
+    m_panelManager.registerPanel(
+        fullId,
+        std::make_unique<PluginPanel>(
+            scripting::PluginRuntimeContext{
+                .entryId = fullId,
+                .sourcePath = resolved.sourcePath,
+                .settings = std::move(seeded),
+                .scriptApi = m_scriptApi,
+                .fileWatcher = &m_fileWatcher,
+                .httpClient = &m_httpClient,
+                .clipboard = &m_clipboardService,
+            },
+            PluginPanelOptions{
+                .width = resolved.entry->panelWidth,
+                .height = resolved.entry->panelHeight,
+                .shellConfig = shellConfig,
+            }
+        )
+    );
+    m_pluginPanelIds.push_back(std::move(fullId));
+  }
+}
+
 void Application::initIpc() {
   if (m_ipcService.start()) {
     kLog.info("IPC socket at {}", m_ipcService.socketPath());
   } else {
     kLog.warn("IPC disabled: could not bind socket");
   }
+
+  m_dmenuIpc.setLauncherPanel(m_launcherPanel);
+  m_dmenuIpc.setPanelManager(&m_panelManager);
+  m_dmenuIpc.start();
 
   m_ipcService.registerHandler(
       "status",
@@ -2259,7 +2517,10 @@ void Application::initIpc() {
             return "error: plugins enable <author/plugin>\n";
           }
           const auto res = m_pluginManager.enable(parts[1]);
-          return res.ok ? "ok\n" : ("error: " + res.error + "\n");
+          if (!res.ok) {
+            return "error: " + res.error + "\n";
+          }
+          return m_pluginManager.isEnabling(parts[1]) ? "ok (exporting in background)\n" : "ok\n";
         }
         if (cmd == "disable") {
           if (parts.size() != 2) {
@@ -2337,7 +2598,8 @@ void Application::initIpc() {
   m_dock.registerIpc(m_ipcService);
   m_wallpaper.registerIpc(m_ipcService);
   greeter::registerIpc(
-      m_ipcService, m_configService, [this]() { return m_themeService.resolvedMode(); }, &m_compositorPlatform
+      m_ipcService, m_configService, [this]() { return m_themeService.resolvedMode(); }, &m_compositorPlatform,
+      [this]() { return m_logindService != nullptr; }
   );
   if (m_mprisService) {
     m_mprisService->registerIpc(m_ipcService);
@@ -2572,6 +2834,7 @@ std::vector<PollSource*> Application::currentPollSources() {
   }
   sources.push_back(&m_fileWatchPollSource);
   sources.push_back(&m_ipcPollSource);
+  sources.push_back(&m_dmenuIpc);
   sources.push_back(&m_httpClientPollSource);
   sources.push_back(&m_locationPollSource);
   sources.push_back(&m_weatherPollSource);

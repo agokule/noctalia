@@ -13,14 +13,10 @@
 
 class ContextMenuPopup;
 class Flex;
-class Glyph;
-class Image;
 class Input;
-class InputArea;
 class Label;
 class LauncherResultAdapter;
 class LauncherAppGridAdapter;
-class Node;
 class Renderer;
 class Segmented;
 class VirtualGridView;
@@ -36,6 +32,12 @@ public:
   // Drop every dynamically-registered (plugin-backed) provider, so the enabled
   // plugin set can be re-applied without disturbing the built-in providers.
   void clearDynamicProviders();
+  // Drop providers whose stable id starts with `prefix` (e.g. config-driven "dmenu.").
+  void clearProvidersWithIdPrefix(std::string_view prefix);
+  // Restrict the next open to a single provider (stdin/dmenu session). When set,
+  // onInputChanged queries only that provider and skips prefix routing/overview.
+  // Cleared on close.
+  void setScopedProvider(std::string_view providerId, std::string_view placeholder = {});
 
   void create() override;
   void onOpen(std::string_view context) override;
@@ -63,6 +65,7 @@ private:
   void onPanelCardOpacityChanged(float opacity) override;
   void doLayout(Renderer& renderer, float width, float height) override;
   void onInputChanged(const std::string& text);
+  void setQuery(std::string query);
   // Re-gather the current query, preserving the selected result by identity.
   void reapplyCurrentQuery();
   // A plugin provider delivered fresh async results — re-gather if the panel is open.
@@ -100,6 +103,8 @@ private:
   std::unique_ptr<LauncherAppGridAdapter> m_gridAdapter;
 
   std::string m_query;
+  std::string m_scopedProviderId;
+  std::string m_scopedPlaceholder;
   ActiveCategoryType m_activeCategoryType = All;
   std::string m_activeCategory;
   std::vector<LauncherCategory> m_currentCategories;

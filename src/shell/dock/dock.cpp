@@ -4,10 +4,7 @@
 #include "compositors/compositor_platform.h"
 #include "config/config_service.h"
 #include "core/log.h"
-#include "core/ui_phase.h"
 #include "ipc/ipc_service.h"
-#include "render/render_context.h"
-#include "render/scene/input_area.h"
 #include "render/scene/node.h"
 #include "shell/dock/dock_context_menu.h"
 #include "shell/dock/dock_geometry.h"
@@ -16,17 +13,11 @@
 #include "shell/dock/dock_model.h"
 #include "shell/dock/pinned_apps.h"
 #include "shell/panel/panel_manager.h"
-#include "shell/surface/shadow.h"
-#include "shell/tooltip/tooltip_manager.h"
-#include "system/app_identity.h"
 #include "system/desktop_entry.h"
 #include "system/desktop_entry_launch.h"
 #include "system/internal_app_metadata.h"
 #include "ui/app_icon_colorization.h"
-#include "ui/builders.h"
-#include "ui/palette.h"
 #include "ui/style.h"
-#include "util/string_utils.h"
 #include "wayland/layer_surface.h"
 #include "wayland/surface.h"
 #include "wayland/wayland_toplevels.h"
@@ -112,11 +103,24 @@ namespace {
         || (compositors::isKde() && (!window.title.empty() || !window.appId.empty()));
   }
 
-  [[nodiscard]] bool matchesActiveWindow(const ToplevelInfo& window, const ActiveToplevel& active) {
+  [[nodiscard]] bool matchesActiveWindow(
+      const ToplevelInfo& window, const ActiveToplevel& active, const std::vector<ToplevelInfo>& windows
+  ) {
     if (active.handle != nullptr && window.handle == active.handle) {
       return true;
     }
-    return !active.identifier.empty() && !window.identifier.empty() && active.identifier == window.identifier;
+
+    if (active.identifier.empty() || window.identifier.empty() || active.identifier != window.identifier) {
+      return false;
+    }
+
+    int count = 0;
+    for (const auto& w : windows) {
+      if (w.identifier == active.identifier && ++count > 1) {
+        return false;
+      }
+    }
+    return true;
   }
 
   const ToplevelInfo* nextActivatableWindow(
@@ -129,7 +133,7 @@ namespace {
 
     if (active.has_value()) {
       for (std::size_t i = 0; i < windows.size(); ++i) {
-        if (!matchesActiveWindow(windows[i], *active)) {
+        if (!matchesActiveWindow(windows[i], *active, windows)) {
           continue;
         }
         for (std::size_t offset = 1; offset <= windows.size(); ++offset) {
@@ -553,6 +557,9 @@ void Dock::syncInstances() {
       ? !m_platform->runningAppIds(nullptr).empty()
       : false;
   const auto outputAllowed = [&](const WaylandOutput& output) {
+    if (!output.done || !output.hasUsableGeometry()) {
+      return false;
+    }
     if (!selectedMonitors.empty() && std::ranges::none_of(selectedMonitors, [&output](const std::string& m) {
           return outputMatchesSelector(m, output);
         })) {
@@ -581,8 +588,6 @@ void Dock::syncInstances() {
   });
 
   for (const auto& output : outputs) {
-    if (!output.done)
-      continue;
     if (!outputAllowed(output))
       continue;
     const bool exists =

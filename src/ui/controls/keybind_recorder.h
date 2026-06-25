@@ -12,7 +12,6 @@
 class Glyph;
 class InputArea;
 class Label;
-class Renderer;
 
 enum class ModifierPolicy : std::uint8_t {
   Required,  // A modifier (Ctrl/Alt/Shift) must accompany printable keys.
@@ -34,6 +33,7 @@ public:
   void setRecordingPlaceholder(std::string_view text);
   void setOnCommit(std::function<void(KeyChord)> callback);
   void setModifierPolicy(ModifierPolicy policy);
+  void setTabFocusKey(std::string key);
 
   [[nodiscard]] bool isRecording() const noexcept { return m_recording; }
 

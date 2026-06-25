@@ -164,6 +164,9 @@ namespace {
     if (ovr.autoHide) {
       resolved.autoHide = *ovr.autoHide;
     }
+    if (ovr.showOnWorkspaceSwitch) {
+      resolved.showOnWorkspaceSwitch = *ovr.showOnWorkspaceSwitch;
+    }
     if (ovr.reserveSpace) {
       resolved.reserveSpace = *ovr.reserveSpace;
     }
@@ -462,6 +465,7 @@ namespace {
               if (item.shortcut.has_value()) {
                 row.insert_or_assign("shortcut", keyChordToString(*item.shortcut));
               }
+              row.insert_or_assign("countdown_seconds", item.countdownSeconds);
               array.push_back(std::move(row));
             }
             table.insert_or_assign(key, std::move(array));
@@ -504,7 +508,7 @@ namespace {
               }
               toml::table row;
               row.insert_or_assign("enabled", item.enabled);
-              row.insert_or_assign("timeout", static_cast<std::int64_t>(item.timeoutSeconds));
+              row.insert_or_assign("timeout", item.timeoutSeconds);
               if (!item.action.empty()) {
                 row.insert_or_assign("action", item.action);
               }
@@ -777,13 +781,22 @@ void ConfigService::addPluginSource(const PluginSourceConfig& source) {
   }
 
   if (!sourceWritten) {
-    // A source name is an identity, not a duplicate key — replace any existing entry.
-    for (auto it = arr->begin(); it != arr->end();) {
+    // A source name is an identity, not a duplicate key. Replace any existing entry
+    // in place — source order is precedence, so toggling enabled must not move the
+    // source to the end. Append only when the name isn't present yet.
+    bool replaced = false;
+    for (auto it = arr->begin(); it != arr->end(); ++it) {
       const auto* tbl = it->as_table();
       const auto name = tbl != nullptr ? (*tbl)["name"].value<std::string>() : std::nullopt;
-      it = (name && *name == source.name) ? arr->erase(it) : it + 1;
+      if (name && *name == source.name) {
+        arr->replace(it, sourceTable(source));
+        replaced = true;
+        break;
+      }
     }
-    arr->push_back(sourceTable(source));
+    if (!replaced) {
+      arr->push_back(sourceTable(source));
+    }
   }
 
   if (!writeOverridesToFile()) {
@@ -1435,6 +1448,10 @@ bool ConfigService::setOverrides(std::vector<std::pair<std::vector<std::string>,
         }
       }
     }
+  }
+
+  if (next == m_overridesTable) {
+    return true;
   }
 
   toml::table previous = std::move(m_overridesTable);

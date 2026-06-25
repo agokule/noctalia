@@ -10,7 +10,6 @@
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "wayland/popup_surface.h"
-#include "wayland/wayland_connection.h"
 #include "xdg-shell-client-protocol.h"
 
 #include <algorithm>
@@ -647,7 +646,7 @@ void TooltipManager::buildScene(const TooltipContent& content, float w, float h,
       auto keyLabel = ui::label({
           .text = row.key,
           .fontSize = Style::fontSizeCaption,
-          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .color = colorSpecFromRole(ColorRole::Secondary),
       });
       const auto km = m_renderContext->measureText(row.key, Style::fontSizeCaption);
       if (km.width > columns.key + 0.5f) {

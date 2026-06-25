@@ -11,6 +11,7 @@
 #include "net/uri.h"
 #include "notification/notification_display_name.h"
 #include "notification/notification_manager.h"
+#include "render/core/texture_manager.h"
 #include "render/render_context.h"
 #include "render/scene/input_area.h"
 #include "shell/surface/edge_inset.h"
@@ -91,7 +92,7 @@ namespace {
     if (timeout <= 0) {
       return -1;
     }
-    return std::max(1000, static_cast<int>(timeout));
+    return static_cast<int>(timeout);
   }
   constexpr int kProgressHeight = 3;
   constexpr int kContentSlideOffset = 12; // subtle foreground slide during reveal/retract
@@ -252,15 +253,7 @@ namespace {
     }
   }
 
-  std::int32_t outputLogicalHeight(const WaylandOutput& output) {
-    if (output.logicalHeight > 0) {
-      return output.logicalHeight;
-    }
-    if (output.height > 0) {
-      return output.height / std::max(1, output.scale);
-    }
-    return 0;
-  }
+  std::int32_t outputLogicalHeight(const WaylandOutput& output) { return output.effectiveLogicalHeight(); }
 
   float notificationTextMaxWidth(float scale, bool showActions) {
     return std::max(
@@ -1627,7 +1620,7 @@ float NotificationToast::maxPlacementBottom() const {
   }
   if (!haveSurfaceHeight && m_wayland != nullptr) {
     for (const auto& output : m_wayland->outputs()) {
-      if (output.output == nullptr) {
+      if (!output.done || output.output == nullptr || !output.hasUsableGeometry()) {
         continue;
       }
       if (!shouldRenderOnOutput(output)) {
@@ -1910,12 +1903,25 @@ void NotificationToast::ensureSurfaces() {
   // currently connected (e.g. an external display was undocked), fall back to every available
   // output so notifications never silently disappear. Targeting is restored automatically when a
   // configured monitor reconnects via onOutputChange().
-  const bool anyConfiguredPresent = selectedMonitors.empty()
-      || std::any_of(m_wayland->outputs().begin(), m_wayland->outputs().end(),
-                     [this](const WaylandOutput& o) { return o.output != nullptr && shouldRenderOnOutput(o); });
+  const bool anyConfiguredPresent =
+      selectedMonitors.empty()
+      || std::any_of(m_wayland->outputs().begin(), m_wayland->outputs().end(), [this](const WaylandOutput& o) {
+           return o.done && o.output != nullptr && o.hasUsableGeometry() && shouldRenderOnOutput(o);
+         });
+
+  std::erase_if(m_instances, [this, anyConfiguredPresent](const auto& inst) {
+    if (inst == nullptr || inst->output == nullptr) {
+      return true;
+    }
+    const auto* output = m_wayland->findOutputByWl(inst->output);
+    if (output == nullptr || !output->done || !output->hasUsableGeometry()) {
+      return true;
+    }
+    return anyConfiguredPresent && !shouldRenderOnOutput(*output);
+  });
 
   for (const auto& output : m_wayland->outputs()) {
-    if (output.output == nullptr) {
+    if (!output.done || output.output == nullptr || !output.hasUsableGeometry()) {
       continue;
     }
     if (anyConfiguredPresent && !shouldRenderOnOutput(output)) {
@@ -1959,6 +1965,7 @@ void NotificationToast::ensureSurfaces() {
         .keyboard = LayerShellKeyboard::None,
         .defaultWidth = surfaceWidth,
         .defaultHeight = surfaceHeightForOutput(output.output),
+        .prewarmBlur = true,
     };
 
     inst->surface = std::make_unique<LayerSurface>(*m_wayland, std::move(surfaceConfig));

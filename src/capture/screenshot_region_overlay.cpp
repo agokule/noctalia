@@ -10,6 +10,7 @@
 #include "i18n/i18n.h"
 #include "render/animation/animation_manager.h"
 #include "render/core/color.h"
+#include "render/core/texture_manager.h"
 #include "render/render_context.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
@@ -367,7 +368,16 @@ namespace capture {
       });
     } else {
       input->setOnPress([this, output = inst.output](const InputArea::PointerData& data) {
-        if (!data.pressed || data.button != BTN_LEFT) {
+        if (data.button != BTN_LEFT) {
+          return;
+        }
+        if (!data.pressed) {
+          if (!m_dragging) {
+            return;
+          }
+          m_dragging = false;
+          // completeSelection() tears down surfaces; defer past InputDispatcher::pointerButton.
+          DeferredCall::callLater([this]() { completeSelection(); });
           return;
         }
         if (m_confirming) {
@@ -406,18 +416,6 @@ namespace capture {
             instance->surface->requestRedraw();
           }
         }
-      });
-
-      input->setOnClick([this](const InputArea::PointerData& data) {
-        if (data.pressed || data.button != BTN_LEFT) {
-          return;
-        }
-        if (!m_dragging) {
-          return;
-        }
-        m_dragging = false;
-        // completeSelection() tears down surfaces; defer past InputDispatcher::pointerButton.
-        DeferredCall::callLater([this]() { completeSelection(); });
       });
     }
 

@@ -12,8 +12,6 @@ class GlSharedContext;
 class RenderTarget;
 class TextureManager;
 struct wl_surface;
-enum class WallpaperSourceKind : std::uint8_t;
-enum class WallpaperTransition : std::uint8_t;
 struct AudioSpectrumStyle;
 struct EffectStyle;
 struct FancyAudioVisualizerStyle;
@@ -21,8 +19,7 @@ struct GraphStyle;
 struct RoundedRectStyle;
 struct ScreenCornerStyle;
 struct SpinnerStyle;
-struct TransitionParams;
-struct WallpaperSpanParams;
+struct CountdownRingStyle;
 struct WallpaperDrawParams;
 
 class RenderFramebuffer {
@@ -144,6 +141,10 @@ public:
   virtual void drawGlyph(const RenderGlyphDraw& draw) = 0;
   virtual void drawSpinner(
       float surfaceWidth, float surfaceHeight, float width, float height, const SpinnerStyle& style,
+      const Mat3& transform
+  ) = 0;
+  virtual void drawCountdownRing(
+      float surfaceWidth, float surfaceHeight, float width, float height, const CountdownRingStyle& style,
       const Mat3& transform
   ) = 0;
   virtual void drawScreenCorner(

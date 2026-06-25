@@ -5,7 +5,6 @@
 #include "compositors/hyprland/hyprland_window_id.h"
 #include "config/config_service.h"
 #include "core/deferred_call.h"
-#include "core/key_chord.h"
 #include "core/key_modifiers.h"
 #include "core/key_symbols.h"
 #include "core/keybind_matcher.h"
@@ -905,7 +904,7 @@ void WindowSwitcher::ensureSurface() {
     return;
   }
   const auto* output = findOutput(*m_wayland, m_output);
-  if (output == nullptr || output->logicalWidth <= 0 || output->logicalHeight <= 0) {
+  if (output == nullptr || !output->hasUsableGeometry()) {
     return;
   }
 
@@ -927,8 +926,8 @@ void WindowSwitcher::ensureSurface() {
       .height = 0,
       .exclusiveZone = -1,
       .keyboard = LayerShellKeyboard::Exclusive,
-      .defaultWidth = static_cast<std::uint32_t>(output->logicalWidth),
-      .defaultHeight = static_cast<std::uint32_t>(output->logicalHeight),
+      .defaultWidth = static_cast<std::uint32_t>(output->effectiveLogicalWidth()),
+      .defaultHeight = static_cast<std::uint32_t>(output->effectiveLogicalHeight()),
   };
 
   inst->surface = std::make_unique<LayerSurface>(*m_wayland, std::move(config));

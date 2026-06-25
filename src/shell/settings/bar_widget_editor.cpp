@@ -1,5 +1,7 @@
 #include "shell/settings/bar_widget_editor.h"
 
+#include "config/config_service.h"
+#include "config/config_types.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "i18n/i18n.h"
 #include "render/scene/node.h"
@@ -2593,8 +2595,8 @@ namespace settings {
           .paddingH = Style::spaceXs * ctx.scale,
           .fill = colorSpecFromRole(ColorRole::Surface, 0.72f),
           .radius = Style::scaledRadiusSm(ctx.scale),
-          .border = isSelected ? colorSpecFromRole(ColorRole::Primary) : colorSpecFromRole(ColorRole::Outline),
-          .borderWidth = isSelected ? Style::borderWidth * 1.5f : Style::borderWidth,
+          .border = isSelected ? colorSpecFromRole(ColorRole::Primary) : clearColorSpec(),
+          .borderWidth = Style::borderWidth,
       });
       auto* cardPtr = card.get();
 

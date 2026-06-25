@@ -2,7 +2,6 @@
 
 #include "config/config_service.h"
 #include "core/log.h"
-#include "pipewire/pipewire_spectrum.h"
 #include "render/render_context.h"
 #include "render/scene/node.h"
 #include "shell/desktop/desktop_widget_layout.h"
@@ -73,8 +72,18 @@ void DesktopWidgetsHost::onSecondTick() {
     if (instance->surface == nullptr || instance->widget == nullptr) {
       continue;
     }
-    if (instance->widget->wantsSecondTicks() || minuteBoundary) {
+    if (instance->widget->wantsSecondTicks()) {
+      instance->surface->requestUpdateOnly();
+    } else if (minuteBoundary) {
       instance->surface->requestUpdate();
+    }
+  }
+}
+
+void DesktopWidgetsHost::requestUpdate() {
+  for (auto& instance : m_instances) {
+    if (instance->surface != nullptr) {
+      instance->surface->requestUpdateOnly();
     }
   }
 }
@@ -342,6 +351,10 @@ void DesktopWidgetsHost::prepareFrame(DesktopWidgetInstance& instance, bool need
     float flipScaleY = 1.0f;
     desktop_widgets::widgetNodeScale(instance.state, flipScaleX, flipScaleY);
     instance.transformNode->setScale(flipScaleX, flipScaleY);
+  }
+
+  if (instance.widget->needsFrameTick()) {
+    instance.surface->requestFrameTick();
   }
 }
 

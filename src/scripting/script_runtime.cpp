@@ -106,7 +106,9 @@ namespace scripting {
       dest.unhealthy = dest.unhealthy || src.unhealthy;
     }
 
-    void dispatchSideEffects(const std::vector<ScriptSideEffect>& effects, ClipboardService* clipboard) {
+    void dispatchSideEffects(
+        const std::vector<ScriptSideEffect>& effects, ClipboardService* clipboard, ScriptApiContext& api
+    ) {
       for (const auto& effect : effects) {
         switch (effect.kind) {
         case ScriptSideEffectKind::Log:
@@ -122,6 +124,9 @@ namespace scripting {
           if (clipboard == nullptr || !clipboard->copyText(effect.title, effect.body)) {
             kLog.warn("scripted clipboard copy failed");
           }
+          break;
+        case ScriptSideEffectKind::SetWallpaperEnabled:
+          api.invokeWallpaperEnabled(effect.title, effect.flag);
           break;
         }
       }
@@ -162,6 +167,8 @@ namespace scripting {
     bool updateRunning = false;
     bool hasOnIpc = false;
     bool hasOnIpcKnown = false;
+    bool hasOnActivate = false;
+    bool hasOnActivateKnown = false;
     bool unhealthy = false;
     int consecutiveTimeouts = 0;
 
@@ -567,10 +574,13 @@ namespace scripting {
 
       result.hasOnIpc = host != nullptr && host->hasGlobal("onIpc");
       result.hasOnIpcKnown = true;
+      const bool onActivatePresent = host != nullptr && host->hasGlobal("onActivate");
       {
         std::scoped_lock lock(mutex);
         hasOnIpc = result.hasOnIpc;
         hasOnIpcKnown = true;
+        hasOnActivate = onActivatePresent;
+        hasOnActivateKnown = true;
       }
       return result;
     }
@@ -654,7 +664,7 @@ namespace scripting {
         }
       }
 
-      dispatchSideEffects(result.sideEffects, clipboard);
+      dispatchSideEffects(result.sideEffects, clipboard, scriptApi);
       result.sideEffects.clear();
 
       for (auto& callback : callbacks) {
@@ -766,6 +776,14 @@ namespace scripting {
     }
     std::scoped_lock lock(m_state->mutex);
     return m_state->hasOnIpcKnown && m_state->hasOnIpc;
+  }
+
+  bool ScriptRuntime::hasOnActivate() const {
+    if (m_state == nullptr) {
+      return false;
+    }
+    std::scoped_lock lock(m_state->mutex);
+    return m_state->hasOnActivateKnown && m_state->hasOnActivate;
   }
 
   bool ScriptRuntime::unhealthy() const {

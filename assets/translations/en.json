@@ -165,7 +165,7 @@
     "audio": {
       "application-volumes": "Application Volumes",
       "choose-effects-profile": "Choose a profile",
-      "effects-profile": "Effects:",
+      "effects-profile": "Effects",
       "input-device-prefix": "Input:",
       "no-application-audio": "No application audio",
       "no-application-audio-body": "No application playback streams are currently available.",
@@ -656,7 +656,12 @@
       "desktop-widgets-editor": "Widget editor",
       "desktop-widgets-editor-enabled": "Desktop widget editor is on. Switch to an empty workspace to see the editor overlay.",
       "greeter-sync": "Noctalia Greeter",
+      "greeter-sync-pending": "Waiting for administrator approval to write to the greeter.",
+      "greeter-sync-pending-console": "Waiting for administrator approval. Approve the polkit prompt in Noctalia, on a TTY or console, or run pkexec manually.",
+      "greeter-sync-pending-manual": "Files are staged. Run in a terminal: pkexec noctalia-greeter-apply-appearance \"$XDG_RUNTIME_DIR/noctalia-greeter-sync\". Or set shell.greeter_sync.privilege_command (for example ghostty -e pkexec) and sync again.",
       "greeter-sync-success": "Appearance synced. Changes apply on the next login screen.",
+      "greeter-sync-timeout": "Greeter sync is still waiting for administrator approval. Check a TTY or console for a polkit prompt, enable the polkit agent in Security settings, or run pkexec manually.",
+      "greeter-sync-timeout-manual": "Greeter sync still needs administrator approval. Run in a terminal: pkexec noctalia-greeter-apply-appearance \"$XDG_RUNTIME_DIR/noctalia-greeter-sync\"",
       "keybind-app": "Noctalia",
       "keybind-invalid-modifier": "This shortcut accepts a single key without modifiers.",
       "keybind-invalid-printable": "Printable keys (letters, numbers, symbols) require a modifier such as Ctrl or Alt.",
@@ -668,6 +673,8 @@
       "lockscreen-widgets-editor-blocked-locked": "Unlock the session before editing lockscreen widgets.",
       "lockscreen-widgets-editor-enabled": "Lockscreen widget editor is on. Arrange widgets on the preview overlay, then lock the session to verify the layout.",
       "mpris-disabled": "MPRIS disabled",
+      "polkit-agent": "Polkit Agent",
+      "polkit-no-session": "Polkit agent needs logind, elogind, or XDG_SESSION_ID. On seatd-only setups it cannot register for graphical prompts. Use terminal pkexec for greeter sync, or install elogind for in-session authentication.",
       "screen-time-reset": "Screen Time",
       "screen-time-reset-success": "Usage history cleared.",
       "session-bus-unavailable": "Session bus unavailable",
@@ -947,6 +954,8 @@
       "reset-page": "Failed to reset some settings.",
       "support-report": "Failed to save support report.",
       "sync-greeter": "Could not sync appearance to Noctalia Greeter.",
+      "sync-greeter-timeout": "Greeter sync is still waiting for administrator approval. Check a TTY or console for a polkit prompt, enable the polkit agent in Security settings, or run pkexec manually.",
+      "sync-greeter-timeout-manual": "Greeter sync still needs administrator approval. Run in a terminal: pkexec noctalia-greeter-apply-appearance \"$XDG_RUNTIME_DIR/noctalia-greeter-sync\"",
       "widget": {
         "rename": "Could not rename named widget."
       },
@@ -1035,6 +1044,7 @@
         "osd": "OSD",
         "overview": "Overview",
         "pinned-apps": "Pinned Apps",
+        "polkit": "Polkit",
         "power": "Power",
         "privacy-security": "Privacy & Security",
         "profile": "Profile",
@@ -1058,6 +1068,7 @@
         "appearance": "Appearance",
         "backdrop": "Backdrop",
         "bar": "Bar",
+        "control-center": "Control Center",
         "desktop": "Desktop",
         "dock": "Dock",
         "hooks": "Hooks",
@@ -1155,10 +1166,14 @@
         "horizontal": "Horizontal",
         "vertical": "Vertical"
       },
+      "panel-position": {
+        "auto": "Follow Bar"
+      },
       "screen-position": {
         "bottom-center": "Bottom Center",
         "bottom-left": "Bottom Left",
         "bottom-right": "Bottom Right",
+        "center": "Center",
         "center-left": "Center Left",
         "center-right": "Center Right",
         "top-center": "Top Center",
@@ -1168,7 +1183,6 @@
       "shell": {
         "panel-placement": {
           "attached": "Attached",
-          "centered": "Centered",
           "floating": "Floating"
         },
         "panel-transparency": {
@@ -1238,6 +1252,20 @@
       }
     },
     "plugins": {
+      "panels": {
+        "open-near-click": {
+          "description": "Open the panel near the bar widget that toggled it",
+          "label": "Open Near Click"
+        },
+        "placement": {
+          "description": "Attach the panel to the bar or float it near the bar edge",
+          "label": "Placement"
+        },
+        "position": {
+          "description": "Screen position when the panel is floating",
+          "label": "Position"
+        }
+      },
       "plugins": {
         "configure": "Configure",
         "deprecated": "deprecated",
@@ -1272,6 +1300,7 @@
         "location-placeholder-path": "~/dev/noctalia-plugins",
         "name-label": "Source ID",
         "name-placeholder": "my-plugins",
+        "precedence-hint": "Lower sources override higher ones when they offer the same plugin.",
         "remove": "Remove source",
         "save": "Save",
         "title": "Sources",
@@ -1498,6 +1527,10 @@
         "shadow": {
           "description": "Cast the global surface shadow from the bar"
         },
+        "show-on-workspace-switch": {
+          "description": "Briefly reveal the bar when the active workspace changes",
+          "label": "Show on Workspace Switch"
+        },
         "start-widgets": {
           "description": "Widgets on the start (left/top) side of the bar",
           "label": "Start Widgets"
@@ -1717,7 +1750,7 @@
             "label": "On Theme Mode Changed"
           },
           "wallpaper-changed": {
-            "description": "Command to run when the wallpaper changes",
+            "description": "Command to run when the wallpaper changes; provides NOCTALIA_WALLPAPER_PATH and NOCTALIA_WALLPAPER_CONNECTOR",
             "label": "On Wallpaper Changed"
           },
           "wifi-disabled": {
@@ -1756,6 +1789,14 @@
         "right": {
           "description": "Move focus or selection to the right",
           "label": "Navigate Right"
+        },
+        "tab-next": {
+          "description": "Move focus to the next pane or control group",
+          "label": "Focus Next Pane"
+        },
+        "tab-previous": {
+          "description": "Move focus to the previous pane or control group",
+          "label": "Focus Previous Pane"
         },
         "up": {
           "description": "Move focus or selection up one row",
@@ -1946,30 +1987,58 @@
           "label": "Open Near Click"
         },
         "placement-clipboard": {
-          "description": "Choose whether the clipboard attaches to the bar, floats near it, or opens centered",
+          "description": "Choose whether the clipboard attaches to the bar or floats at a chosen screen position",
           "label": "Placement"
         },
         "placement-control-center": {
-          "description": "Choose whether Control Center attaches to the bar, floats near it, or opens centered",
+          "description": "Choose whether Control Center attaches to the bar or floats at a chosen screen position",
           "label": "Placement"
         },
         "placement-launcher": {
-          "description": "Choose whether the launcher attaches to the bar, floats near it, or opens centered",
+          "description": "Choose whether the launcher attaches to the bar or floats at a chosen screen position",
+          "label": "Placement"
+        },
+        "placement-polkit": {
+          "description": "Choose whether the polkit prompt attaches to the bar or floats at a chosen screen position",
           "label": "Placement"
         },
         "placement-session": {
-          "description": "Choose whether the session menu attaches to the bar, floats near it, or opens centered",
+          "description": "Choose whether the session menu attaches to the bar or floats at a chosen screen position",
           "label": "Placement"
         },
         "placement-wallpaper": {
-          "description": "Choose whether the wallpaper picker attaches to the bar, floats near it, or opens centered",
+          "description": "Choose whether the wallpaper picker attaches to the bar or floats at a chosen screen position",
           "label": "Placement"
+        },
+        "position-clipboard": {
+          "description": "Where the clipboard floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
+        },
+        "position-control-center": {
+          "description": "Where Control Center floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
+        },
+        "position-launcher": {
+          "description": "Where the launcher floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
+        },
+        "position-polkit": {
+          "description": "Where the polkit prompt floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
+        },
+        "position-session": {
+          "description": "Where the session menu floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
+        },
+        "position-wallpaper": {
+          "description": "Where the wallpaper picker floats on screen — Follow Bar keeps it near the bar",
+          "label": "Position"
         },
         "shadow": {
           "description": "Cast the global surface shadow from panel surfaces"
         },
         "transparency-mode": {
-          "description": "Panel glass style, including floating/centered panel opacity and card translucency",
+          "description": "Panel glass style, including floating panel opacity and card translucency",
           "label": "Transparency"
         }
       },
@@ -2224,6 +2293,10 @@
         "date-format": {
           "description": "Default date format for shell UI without its own setting",
           "label": "Date Format"
+        },
+        "greeter-sync-privilege-command": {
+          "description": "Replace pkexec/run0 for greeter Sync Now. The apply helper path and staging directory are appended automatically. Example: ghostty -e pkexec",
+          "label": "Greeter Sync Privilege Command"
         },
         "launch-apps-as-systemd-services": {
           "description": "Launches applications in separate systemd services so they don't share Noctalia's cgroup",
@@ -2522,6 +2595,8 @@
       "command-label": "Shell command",
       "command-placeholder": "Optional bash command, leave empty for built-in behavior",
       "command-required-placeholder": "Shell command to run",
+      "countdown-seconds-description": "Wait this many seconds before running. Activate again to confirm immediately. 0 runs at once.",
+      "countdown-seconds-label": "Countdown (seconds)",
       "glyph-label": "Glyph",
       "glyph-picker-title": "Action glyph",
       "kind-section-label": "Behavior",
@@ -3119,6 +3194,7 @@
       "m3-rainbow": "M3 Rainbow",
       "m3-tonal-spot": "M3 Tonal Spot",
       "muted": "Muted",
+      "soft": "Soft",
       "vibrant": "Vibrant"
     }
   },

@@ -3,7 +3,7 @@
 #include "core/log.h"
 #include "i18n/i18n.h"
 #include "notification/notifications.h"
-#include "scripting/script_api_context.h"
+#include "scripting/plugin_runtime_context.h"
 #include "ui/controls/flex.h"
 
 #include <cstdlib>
@@ -57,9 +57,11 @@ void PluginDesktopWidget::create() {
   m_flex = flex.get();
   setRoot(std::move(flex));
 
-  m_reconciler.setCallbackSink([this](const std::string& functionName) {
+  m_reconciler.setCallbackSink([this](const ui::UiTreeReconciler::ControlCallback& callback) {
     if (m_runtime != nullptr) {
-      (void)m_runtime->enqueueCall(functionName, makeScriptSnapshot());
+      (void)m_runtime->enqueueCallStrings(
+          callback.fn, callback.arg1, callback.arg2, makeScriptSnapshot(), callback.coalesce
+      );
     }
   });
   m_reconciler.setPathResolver([this](const std::string& path) { return resolvePluginPath(path); });

@@ -1,7 +1,5 @@
 #pragma once
 
-#include "render/core/color.h"
-#include "render/core/renderer.h"
 #include "render/scene/input_area.h"
 #include "render/scene/node.h"
 #include "ui/controls/box.h"
@@ -159,6 +157,7 @@ namespace ui {
     std::optional<std::string> glyph = std::nullopt;
     std::optional<float> fontSize = std::nullopt;
     std::optional<float> glyphSize = std::nullopt;
+    std::optional<float> controlHeight = std::nullopt;
     std::optional<bool> enabled = std::nullopt;
     std::optional<bool> selected = std::nullopt;
     std::optional<ButtonContentAlign> contentAlign = std::nullopt;

@@ -29,6 +29,7 @@
   "bar": {
     "screenshot": {
       "choose-display": "Scegli monitor",
+      "confirm-region": "Invio o Spazio per catturare · Esc per annullare · Trascina per riselezionare",
       "fullscreen": "Schermo intero",
       "region": "Seleziona area"
     },
@@ -164,7 +165,7 @@
     "audio": {
       "application-volumes": "Volume applicazioni",
       "choose-effects-profile": "Scegli un profilo",
-      "effects-profile": "Effetti:",
+      "effects-profile": "Effetti",
       "input-device-prefix": "Input:",
       "no-application-audio": "Nessun audio applicazione",
       "no-application-audio-body": "Nessun flusso di riproduzione applicazione disponibile al momento.",
@@ -232,7 +233,7 @@
       },
       "select-avatar": "Seleziona avatar",
       "unknown": "sconosciuto",
-      "uptime": "Tempo attivo - {uptime}",
+      "uptime": "Tempo di attività - {uptime}",
       "weather": {
         "configure-location": "Aggiungi [weather].address o abilita auto_locate.",
         "data-unavailable": "Dati meteo non disponibili.",
@@ -265,8 +266,8 @@
     },
     "notifications": {
       "clear-all": "Cancella tutte le notifiche",
-      "dnd-off": "Disattiva non disturbare",
-      "dnd-on": "Attiva non disturbare",
+      "dnd-off": "Disattiva DND",
+      "dnd-on": "Attiva DND",
       "empty-body": "Le notifiche recenti verranno mostrate qui.",
       "empty-title": "Nessuna notifica",
       "filter": {
@@ -324,7 +325,7 @@
         "scheduled-day": "Programmato",
         "scheduled-night": "In esecuzione"
       },
-      "notification": "Non disturbare",
+      "notification": "DND",
       "power-profile": "Energia",
       "screen-time": "Screen time",
       "session": "Sessione",
@@ -684,8 +685,8 @@
       "on": "Modalità Caffeine attivata"
     },
     "dnd": {
-      "off": "Non disturbare disattivato",
-      "on": "Non disturbare attivato"
+      "off": "DND disattivato",
+      "on": "DND attivato"
     },
     "effects": {
       "input": "Effetti input",
@@ -1057,6 +1058,7 @@
         "appearance": "Aspetto",
         "backdrop": "Sfondo pannelli",
         "bar": "Barra",
+        "control-center": "Centro di controllo",
         "desktop": "Desktop",
         "dock": "Dock",
         "hooks": "Hook",
@@ -1154,10 +1156,14 @@
         "horizontal": "Orizzontale",
         "vertical": "Verticale"
       },
+      "panel-position": {
+        "auto": "Segui la barra"
+      },
       "screen-position": {
         "bottom-center": "Basso centro",
         "bottom-left": "Basso sinistra",
         "bottom-right": "Basso destra",
+        "center": "Centra",
         "center-left": "Centro sinistra",
         "center-right": "Centro destra",
         "top-center": "Alto centro",
@@ -1167,7 +1173,6 @@
       "shell": {
         "panel-placement": {
           "attached": "Attaccato",
-          "centered": "Centrato",
           "floating": "Flottante"
         },
         "panel-transparency": {
@@ -1237,12 +1242,27 @@
       }
     },
     "plugins": {
+      "panels": {
+        "open-near-click": {
+          "description": "Apri il pannello vicino al widget della barra che lo ha attivato",
+          "label": "Apri vicino al click"
+        },
+        "placement": {
+          "description": "Attacca il pannello alla barra o posizionalo vicino al bordo della barra",
+          "label": "Posizione"
+        },
+        "position": {
+          "description": "Posizione dello schermo quando il pannello è mobile",
+          "label": "Posizione"
+        }
+      },
       "plugins": {
         "configure": "Configura",
         "deprecated": "deprecato",
         "empty": "Nessun plugin trovato. Aggiungi una sorgente o controlla la rete",
         "loading": "Caricamento plugin...",
         "refreshing": "Aggiornamento plugin...",
+        "requires": "Richiede: {dependencies}",
         "requires-newer-noctalia": "Richiede Noctalia aggiornato",
         "title": "Elenco plugin"
       },
@@ -1270,6 +1290,7 @@
         "location-placeholder-path": "~/dev/noctalia-plugins",
         "name-label": "ID sorgente",
         "name-placeholder": "miei-plugin",
+        "precedence-hint": "Sorgenti inferiori prevalgono su quelle in alto se offrono lo stesso plugin.",
         "remove": "Rimuovi sorgente",
         "save": "Salva",
         "title": "Sorgenti",
@@ -1495,6 +1516,10 @@
         },
         "shadow": {
           "description": "Proietta l'ombra globale della superficie dalla barra"
+        },
+        "show-on-workspace-switch": {
+          "description": "Mostra brevemente la barra quando l'area di lavoro attiva cambia",
+          "label": "Mostra al cambio area di lavoro"
         },
         "start-widgets": {
           "description": "Widget sul lato iniziale (sinistra/alto) della barra",
@@ -1755,6 +1780,14 @@
           "description": "Sposta focus o selezione a destra",
           "label": "Naviga a destra"
         },
+        "tab-next": {
+          "description": "Sposta il focus sul riquadro o control group successivo",
+          "label": "Focus sul pannello successivo"
+        },
+        "tab-previous": {
+          "description": "Sposta il focus sul riquadro o control group precedente",
+          "label": "Focus sul pannello precedente"
+        },
         "up": {
           "description": "Sposta focus o selezione su di una riga",
           "label": "Naviga su"
@@ -1841,11 +1874,11 @@
           "label": "Monitor"
         },
         "offset-x": {
-          "description": "Margine orizzontale assoluto dal bordo schermo o barra",
+          "description": "Margine orizzontale assoluto da bordo schermo o barra",
           "label": "Margine orizzontale"
         },
         "offset-y": {
-          "description": "Margine verticale assoluto dal bordo schermo o barra",
+          "description": "Margine verticale assoluto da bordo schermo o barra",
           "label": "Margine verticale"
         },
         "position": {
@@ -1944,7 +1977,7 @@
           "label": "Apri vicino al click"
         },
         "placement-clipboard": {
-          "description": "Scegli se gli appunti si attaccano alla barra, fluttuano vicino a essa o si aprono centrati",
+          "description": "Scegli se il pannello appunti si attacca alla barra, fluttua vicino a essa o si apre centrato",
           "label": "Posizionamento"
         },
         "placement-control-center": {
@@ -1963,11 +1996,31 @@
           "description": "Scegli se il selettore sfondo si attacca alla barra, fluttua vicino ad essa o si apre centrato",
           "label": "Posizionamento"
         },
+        "position-clipboard": {
+          "description": "Dove il pannello appunti appare sullo schermo — Segui la barra lo mantiene vicino ad essa",
+          "label": "Posizione"
+        },
+        "position-control-center": {
+          "description": "Dove il centro di controllo appare sullo schermo — Segui la barra lo mantiene vicino ad essa",
+          "label": "Posizione"
+        },
+        "position-launcher": {
+          "description": "Dove il launcher appare sullo schermo — Segui la barra lo mantiene vicino ad essa",
+          "label": "Posizione"
+        },
+        "position-session": {
+          "description": "Dove il menu di sessione appare sullo schermo — Segui la barra lo mantiene vicino ad essa",
+          "label": "Posizione"
+        },
+        "position-wallpaper": {
+          "description": "Dove il selettore dello sfondo appare sullo schermo — Segui la barra lo mantiene vicino ad essa",
+          "label": "Posizione"
+        },
         "shadow": {
           "description": "Proietta l'ombra globale della superficie dalle superfici pannello"
         },
         "transparency-mode": {
-          "description": "Stile vetro del pannello, incluse opacità dei pannelli flottanti/centrati e traslucenza delle schede",
+          "description": "Stile vetro del pannello, incluse opacità dei pannelli flottanti e traslucenza delle schede",
           "label": "Trasparenza"
         }
       },
@@ -2022,7 +2075,7 @@
           "placeholder": "Città, Paese"
         },
         "location-auto-locate": {
-          "description": "Rileva automaticamente la tua posizione dall'indirizzo IP",
+          "description": "Rileva automaticamente la tua posizione in base al tuo indirizzo IP",
           "label": "Localizzazione automatica (IP)"
         },
         "longitude": {
@@ -2252,8 +2305,8 @@
           "label": "Modalità Caffeine"
         },
         "osd-kinds-dnd": {
-          "description": "Mostra un popup OSD quando Non disturbare viene attivato/disattivato",
-          "label": "Non disturbare"
+          "description": "Mostra un popup OSD quando la modalità DND viene attivata/disattivata",
+          "label": "DND"
         },
         "osd-kinds-keyboard-layout": {
           "description": "Mostra un popup OSD quando cambia il layout della tastiera",
@@ -2300,15 +2353,15 @@
           "label": "Monitor"
         },
         "osd-offset-x": {
-          "description": "Margine orizzontale assoluto dal bordo schermo",
+          "description": "Margine orizzontale assoluto da bordo schermo",
           "label": "Margine orizzontale"
         },
         "osd-offset-y": {
-          "description": "Margine verticale assoluto dal bordo schermo",
+          "description": "Margine verticale assoluto da bordo schermo",
           "label": "Margine verticale"
         },
         "osd-orientation": {
-          "description": "Direzione layout per popup OSD",
+          "description": "Direzione layout dei popup OSD",
           "label": "Orientamento"
         },
         "osd-position": {
@@ -2347,6 +2400,10 @@
           "button": "Reset",
           "description": "Cancella la cronologia di utilizzo in primo piano per app",
           "label": "Ripristina i dati del tempo schermo"
+        },
+        "screenshot-confirm-region": {
+          "description": "Dopo aver selezionato un'area, mantieni aperta l'overlay finché non confermi con Invio o Spazio",
+          "label": "Conferma area selezionata"
         },
         "screenshot-copy-to-clipboard": {
           "description": "Copia il PNG catturato negli appunti",
@@ -2510,8 +2567,10 @@
       "add": "Aggiungi azione",
       "clear-glyph": "Cancella",
       "command-label": "Comando shell",
-      "command-placeholder": "Comando bash opzionale, lascia vuoto per comportamento integrato",
+      "command-placeholder": "Comando bash opzionale, lascia vuoto per comportamento di default",
       "command-required-placeholder": "Comando shell da eseguire",
+      "countdown-seconds-description": "Attendi questi secondi prima di eseguire. Seleziona di nuovo per confermare immediatamente. 0 esegue subito.",
+      "countdown-seconds-label": "Conto alla rovescia (secondi)",
       "glyph-label": "Glifo",
       "glyph-picker-title": "Glifo azione",
       "kind-section-label": "Comportamento",
@@ -3109,6 +3168,7 @@
       "m3-rainbow": "M3 Rainbow",
       "m3-tonal-spot": "M3 Tonal Spot",
       "muted": "Tenue",
+      "soft": "Soft",
       "vibrant": "Vivace"
     }
   },

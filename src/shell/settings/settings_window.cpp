@@ -1,9 +1,10 @@
 #include "shell/settings/settings_window.h"
 
-#include "compositors/compositor_platform.h"
 #include "config/config_service.h"
 #include "config/config_types.h"
 #include "core/deferred_call.h"
+#include "core/key_modifiers.h"
+#include "core/key_symbols.h"
 #include "core/keybind_matcher.h"
 #include "core/log.h"
 #include "core/ui_phase.h"
@@ -14,10 +15,12 @@
 #include "system/dependency_service.h"
 #include "ui/controls/box.h"
 #include "ui/controls/flex.h"
+#include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/select_dropdown_popup.h"
 #include "ui/palette.h"
+#include "ui/split_pane_focus.h"
 #include "ui/style.h"
 #include "wayland/toplevel_surface.h"
 #include "wayland/wayland_connection.h"
@@ -30,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 namespace {
 
@@ -70,6 +74,40 @@ namespace {
     static constexpr std::string_view kSettingsAppId = "dev.noctalia.Noctalia.Settings";
     wayland.activateSurface(surface);
     wayland.activateToplevelForAppId(kSettingsAppId);
+  }
+
+  [[nodiscard]] bool isSettingsSearchTypingKey(const KeyboardEvent& event) {
+    if (!event.pressed || event.preedit) {
+      return false;
+    }
+    if ((event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) != 0) {
+      return false;
+    }
+    if (KeybindMatcher::matches(KeybindAction::Cancel, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::TabPrevious, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::TabNext, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::Up, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::Down, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::Left, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::Right, event.sym, event.modifiers)
+        || KeybindMatcher::matches(KeybindAction::Validate, event.sym, event.modifiers)) {
+      return false;
+    }
+    if (KeySymbol::isBackspace(event.sym)) {
+      return true;
+    }
+    return event.utf32 > 0x20U && event.utf32 != 0x7FU;
+  }
+
+  void requestSceneInvalidation(Node* sceneRoot, ToplevelSurface* surface) {
+    if (sceneRoot == nullptr || surface == nullptr) {
+      return;
+    }
+    if (sceneRoot->layoutDirty()) {
+      surface->requestLayout();
+    } else if (sceneRoot->paintDirty()) {
+      surface->requestRedraw();
+    }
   }
 
 } // namespace
@@ -393,6 +431,8 @@ void SettingsWindow::destroyWindow() {
   m_headerRow = nullptr;
   m_contentContainer = nullptr;
   m_contentScrollView = nullptr;
+  m_sidebarScrollView = nullptr;
+  m_sidebarNav = nullptr;
   m_actionsMenuButton = nullptr;
   if (m_actionsMenuPopup != nullptr) {
     m_actionsMenuPopup->close();
@@ -482,7 +522,9 @@ void SettingsWindow::prepareFrame(bool /*needsUpdate*/, bool needsLayout) {
 
   if (needRebuild) {
     UiPhaseScope layoutPhase(UiPhase::Layout);
+    m_inputDispatcher.stashTabFocus();
     buildScene(width, height);
+    m_inputDispatcher.restoreStashedTabFocus();
     m_lastSceneWidth = width;
     m_lastSceneHeight = height;
     m_rebuildRequested = false;
@@ -504,7 +546,9 @@ void SettingsWindow::prepareFrame(bool /*needsUpdate*/, bool needsLayout) {
       m_mainContainer->setSize(w, h);
     }
     if (m_contentRebuildRequested) {
+      m_inputDispatcher.stashTabFocus();
       rebuildSettingsContent();
+      m_inputDispatcher.restoreStashedTabFocus();
       m_contentRebuildRequested = false;
     }
     m_sceneRoot->layout(*m_renderContext);
@@ -872,6 +916,57 @@ void SettingsWindow::onKeyboardEvent(const KeyboardEvent& event) {
       requestRebuild();
       return;
     }
+  }
+  if (event.pressed
+      && !event.preedit
+      && (event.modifiers & KeyMod::Ctrl) != 0
+      && (event.sym == XKB_KEY_f || event.sym == XKB_KEY_F)) {
+    if (m_settingsSearchInput != nullptr && m_settingsSearchInput->inputArea() != nullptr) {
+      m_inputDispatcher.setFocus(m_settingsSearchInput->inputArea());
+    } else {
+      m_focusSearchOnRebuild = true;
+      requestSceneRebuild();
+    }
+    if (m_surface != nullptr) {
+      m_surface->requestRedraw();
+    }
+    return;
+  }
+  if (m_sidebarNav != nullptr
+      && m_sidebarScrollView != nullptr
+      && m_contentScrollView != nullptr
+      && m_contentScrollView->content() != nullptr) {
+    const SplitPaneFocusConfig panes{
+        .sidebarFocus = m_sidebarNav->focusArea(),
+        .sidebarRoot = m_sidebarScrollView,
+        .contentRoot = m_contentScrollView->content(),
+        .headerFocus = m_settingsSearchInput != nullptr ? m_settingsSearchInput->inputArea() : nullptr,
+    };
+    const SplitPaneFocusResult splitResult = handleSplitPaneFocusNavigation(
+        m_inputDispatcher, panes, event.sym, event.modifiers, event.pressed, event.preedit
+    );
+    if (splitResult == SplitPaneFocusResult::Consumed) {
+      if (m_sceneRoot != nullptr && m_surface != nullptr && (m_sceneRoot->paintDirty() || m_sceneRoot->layoutDirty())) {
+        if (m_sceneRoot->layoutDirty()) {
+          m_surface->requestLayout();
+        } else {
+          m_surface->requestRedraw();
+        }
+      }
+      return;
+    }
+  }
+  if (event.pressed
+      && !event.preedit
+      && m_inputDispatcher.focusedArea() == nullptr
+      && m_settingsSearchInput != nullptr
+      && m_settingsSearchInput->inputArea() != nullptr
+      && (m_actionsMenuPopup == nullptr || !m_actionsMenuPopup->isOpen())
+      && isSettingsSearchTypingKey(event)) {
+    m_inputDispatcher.setFocus(m_settingsSearchInput->inputArea());
+    m_inputDispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+    requestSceneInvalidation(m_sceneRoot.get(), m_surface.get());
+    return;
   }
   m_inputDispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
   if (m_sceneRoot != nullptr && m_surface != nullptr && (m_sceneRoot->paintDirty() || m_sceneRoot->layoutDirty())) {

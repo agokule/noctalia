@@ -81,9 +81,9 @@ private:
   void applyGammaToAll(int kelvin);
   void restoreAll();
 
+  void applyTarget(int kelvin);
   void ensureTick();
   void tickGamma();
-  bool stepToward(int targetKelvin);
 
   void notifyStateFeedback();
 
@@ -112,7 +112,6 @@ private:
   int m_targetKelvin = -1;
   Timer m_transitionTimer;
 
-  bool m_restoreAfterFade = false;
   Timer m_scheduleTimer;
   bool m_gammaUnavailableLogged = false;
 };

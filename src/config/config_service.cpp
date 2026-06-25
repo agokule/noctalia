@@ -13,7 +13,6 @@
 #include "core/scoped_timer.h"
 #include "ipc/ipc_service.h"
 #include "notification/notification_manager.h"
-#include "render/core/renderer.h"
 #include "shell/desktop/desktop_widget_settings_registry.h"
 #include "shell/settings/widget_settings_registry.h"
 #include "system/distro_info.h"
@@ -262,6 +261,10 @@ namespace {
       return keybinds.up;
     case KeybindAction::Down:
       return keybinds.down;
+    case KeybindAction::TabNext:
+      return keybinds.tabNext;
+    case KeybindAction::TabPrevious:
+      return keybinds.tabPrevious;
     }
     return keybinds.validate;
   }
@@ -832,6 +835,8 @@ BarConfig ConfigService::resolveForOutput(const BarConfig& base, const WaylandOu
       resolved.enabled = *ovr.enabled;
     if (ovr.autoHide)
       resolved.autoHide = *ovr.autoHide;
+    if (ovr.showOnWorkspaceSwitch)
+      resolved.showOnWorkspaceSwitch = *ovr.showOnWorkspaceSwitch;
     if (ovr.reserveSpace)
       resolved.reserveSpace = *ovr.reserveSpace;
     if (ovr.layer)

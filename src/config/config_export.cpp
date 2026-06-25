@@ -2,11 +2,9 @@
 
 #include "config/schema/config_schema.h"
 #include "config/schema/engine.h"
-#include "core/key_chord.h"
 
 #include <algorithm>
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -92,6 +90,8 @@ namespace config_export {
         resolved.enabled = *ovr.enabled;
       if (ovr.autoHide)
         resolved.autoHide = *ovr.autoHide;
+      if (ovr.showOnWorkspaceSwitch)
+        resolved.showOnWorkspaceSwitch = *ovr.showOnWorkspaceSwitch;
       if (ovr.reserveSpace)
         resolved.reserveSpace = *ovr.reserveSpace;
       if (ovr.layer)

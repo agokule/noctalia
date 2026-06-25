@@ -1,9 +1,9 @@
 #pragma once
 
+#include "core/timer_manager.h"
 #include "shell/bar/bar_instance.h"
 #include "shell/bar/bar_services.h"
 #include "shell/bar/widget_factory.h"
-#include "shell/panel/attached_panel_context.h"
 #include "ui/dialogs/layer_popup_host.h"
 #include "wayland/surface.h"
 
@@ -12,6 +12,7 @@
 #include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class ConfigService;
@@ -62,6 +63,7 @@ public:
   void unsuppressDisplay();
   [[nodiscard]] bool isVisible() const noexcept;
   void onOutputChange();
+  void onWorkspaceChanged();
   void onSecondTick();
   void refresh();
   void requestLayout();
@@ -89,6 +91,7 @@ public:
   void
   setAttachedPanelGeometry(wl_output* output, std::string_view barName, std::optional<AttachedPanelGeometry> geometry);
   [[nodiscard]] bool canAttachPanelToBar(wl_output* output, std::string_view barName) const noexcept;
+  [[nodiscard]] std::optional<std::string> layerForBar(wl_output* output, std::string_view barName) const noexcept;
   // True when an attached panel may start its reveal animation: non-autohide bars, or autohide
   // bars that have finished sliding into their resting position.
   [[nodiscard]] bool isAttachedPanelBarSettled(wl_output* output, std::string_view barName) const noexcept;
@@ -126,12 +129,14 @@ private:
   [[nodiscard]] bool shouldReserveExclusiveZone(const BarInstance& instance) const noexcept;
   [[nodiscard]] bool barContentVisuallyShown(const BarInstance& instance) const noexcept;
   void revealAutoHideBar(BarInstance& instance);
+  void applyPendingWorkspaceReveal();
   void startHideFadeOut(BarInstance& instance);
   static void applyBackgroundPalette(BarInstance& instance);
   [[nodiscard]] std::string showBarIpc(std::string_view args);
   [[nodiscard]] std::string hideBarIpc(std::string_view args);
   [[nodiscard]] std::string toggleBarIpc(std::string_view args);
   [[nodiscard]] std::string setBarAutoHideIpc(std::string_view args);
+  [[nodiscard]] std::string setBarLayerIpc(std::string_view args);
   [[nodiscard]] std::optional<std::string> collectBarIpcInstances(
       std::optional<std::string_view> barName, std::optional<std::string_view> monitorSelector,
       std::vector<BarInstance*>& instancesOut
@@ -182,6 +187,10 @@ private:
   BarInstance* m_hoveredInstance = nullptr;
   std::function<bool(const BarInstance&)> m_autoHideSuppressionCallback;
   std::function<void(std::string, std::string)> m_openWidgetSettingsCallback;
+  Timer m_workspaceRevealDebounce;
+  Timer m_workspacePeekHideTimer;
+  std::unordered_set<std::uint32_t> m_pendingWorkspaceRevealOutputs;
+  std::unordered_map<std::uint32_t, std::string> m_lastActiveWorkspaceByOutput;
   bool m_overlayDisplaySuppressed = false;
   bool m_wasVisibleBeforeOverlaySuppress = false;
 };

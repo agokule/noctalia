@@ -395,6 +395,7 @@ _noctalia_sources = files(
   'src/config/cli.cpp',
   'src/core/build_info.cpp',
   'src/core/deferred_call.cpp',
+  'src/core/process_fds.cpp',
   'src/core/file_watcher.cpp',
   'src/core/key_chord.cpp',
   'src/core/log.cpp',
@@ -415,6 +416,7 @@ _noctalia_sources = files(
   'src/dbus/network/network_secret_agent.cpp',
   'src/dbus/network/wpa_supplicant_service.cpp',
   'src/dbus/polkit/polkit_agent.cpp',
+  'src/dbus/polkit/polkit_session_support.cpp',
   'src/dbus/notification/kde_notification_client.cpp',
   'src/dbus/notification/notification_poll_source.cpp',
   'src/dbus/notification/notification_service.cpp',
@@ -435,6 +437,11 @@ _noctalia_sources = files(
   'src/ipc/ipc_client.cpp',
   'src/ipc/ipc_service.cpp',
   'src/launcher/app_provider.cpp',
+  'src/launcher/dmenu_cli.cpp',
+  'src/launcher/dmenu_ipc.cpp',
+  'src/launcher/dmenu_provider.cpp',
+  'src/launcher/dmenu_socket_path.cpp',
+  'src/launcher/dmenu_stdin_provider.cpp',
   'src/launcher/emoji_provider.cpp',
   'src/launcher/math_provider.cpp',
   'src/launcher/plugin_launcher_provider.cpp',
@@ -474,6 +481,7 @@ _noctalia_sources = files(
   'src/render/programs/linear_gradient_program.cpp',
   'src/render/programs/rect_program.cpp',
   'src/render/programs/screen_corner_program.cpp',
+  'src/render/programs/countdown_ring_program.cpp',
   'src/render/programs/spinner_program.cpp',
   'src/render/programs/audio_spectrum_program.cpp',
   'src/render/programs/fancy_audio_visualizer_program.cpp',
@@ -503,6 +511,7 @@ _noctalia_sources = files(
   'src/scripting/plugin_ipc.cpp',
   'src/scripting/plugin_manager.cpp',
   'src/scripting/plugin_manifest.cpp',
+  'src/scripting/plugin_panel_shell.cpp',
   'src/scripting/plugin_registry.cpp',
   'src/scripting/plugin_service_host.cpp',
   'src/scripting/plugin_source_locks.cpp',
@@ -592,6 +601,7 @@ _noctalia_sources = files(
   'src/shell/panel/panel_click_shield.cpp',
   'src/wayland/hyprland/focus_grab_service.cpp',
   'src/shell/panel/panel_manager.cpp',
+  'src/shell/panel/plugin_panel.cpp',
   'src/shell/polkit/polkit_panel.cpp',
   'src/shell/session/session_action_meta.cpp',
   'src/shell/session/session_action_runner.cpp',
@@ -706,6 +716,7 @@ _noctalia_sources = files(
   'src/ui/controls/collapsible.cpp',
   'src/ui/controls/context_menu.cpp',
   'src/ui/controls/context_menu_popup.cpp',
+  'src/ui/controls/countdown_ring.cpp',
   'src/ui/controls/flex.cpp',
   'src/ui/controls/glyph.cpp',
   'src/ui/controls/graph.cpp',
@@ -724,6 +735,7 @@ _noctalia_sources = files(
   'src/ui/controls/radio_button.cpp',
   'src/ui/controls/scrollbar.cpp',
   'src/ui/controls/scroll_view.cpp',
+  'src/ui/controls/roving_list_nav.cpp',
   'src/ui/controls/search_picker.cpp',
   'src/ui/controls/range_slider.cpp',
   'src/ui/controls/screen_corner.cpp',
@@ -743,6 +755,8 @@ _noctalia_sources = files(
   'src/ui/app_icon_colorization.cpp',
   'src/ui/palette.cpp',
   'src/ui/popup_chrome.cpp',
+  'src/ui/scroll_into_view.cpp',
+  'src/ui/split_pane_focus.cpp',
   'src/ui/style.cpp',
   'src/util/checksum.cpp',
   'src/util/fuzzy_match.cpp',
@@ -948,6 +962,22 @@ animation_manager_test = executable('animation_manager_test',
 
 test('animation_manager', animation_manager_test)
 
+input_area_test = executable('input_area_test',
+  sources: files(
+    'tests/input_area_test.cpp',
+    'src/render/scene/input_area.cpp',
+    'src/render/scene/node.cpp',
+    'src/render/animation/animation.cpp',
+    'src/render/animation/animation_manager.cpp',
+    'src/render/animation/motion_service.cpp',
+    'src/core/ui_phase.cpp',
+    'src/core/log.cpp',
+  ),
+  include_directories: _noctalia_inc,
+)
+
+test('input_area', input_area_test)
+
 log_test = executable('log_test',
   sources: files(
     'tests/log_test.cpp',
@@ -1052,6 +1082,35 @@ i18n_language_tag_test = executable('i18n_language_tag_test',
 
 test('i18n_language_tag', i18n_language_tag_test)
 
+i18n_supported_languages_test = executable('i18n_supported_languages_test',
+  sources: files(
+    'tests/i18n_supported_languages_test.cpp',
+  ),
+  include_directories: _noctalia_inc,
+  cpp_args: [
+    '-DNOCTALIA_SOURCE_ASSETS_DIR="' + meson.project_source_root() / 'assets' + '"',
+  ],
+)
+
+test('i18n_supported_languages', i18n_supported_languages_test)
+
+scheme_test = executable('scheme_test',
+  sources: files(
+    'tests/scheme_test.cpp',
+    'src/theme/scheme.cpp',
+    'src/theme/color.cpp',
+    'src/theme/contrast.cpp',
+    'src/theme/custom_schemes.cpp',
+    'src/theme/fixed_palette.cpp',
+  ),
+  include_directories: _noctalia_inc,
+  dependencies: [
+    mcu_dep,
+  ],
+)
+
+test('scheme', scheme_test)
+
 plugin_source_paths_test = executable('plugin_source_paths_test',
   sources: files(
     'tests/plugin_source_paths_test.cpp',
@@ -1103,13 +1162,27 @@ ui_tree_reconciler_test = executable('ui_tree_reconciler_test',
     'src/ui/controls/glyph.cpp',
     'src/ui/controls/graph.cpp',
     'src/ui/controls/image.cpp',
+    'src/ui/controls/input.cpp',
     'src/ui/controls/label.cpp',
     'src/ui/controls/progress_bar.cpp',
+    'src/ui/controls/scroll_view.cpp',
+    'src/ui/controls/scrollbar.cpp',
+    'src/ui/controls/select.cpp',
     'src/ui/controls/separator.cpp',
+    'src/ui/controls/slider.cpp',
     'src/ui/controls/spacer.cpp',
+    'src/ui/controls/toggle.cpp',
+    'src/ui/controls/color_swatch_preview.cpp',
     'src/ui/app_icon_colorization.cpp',
     'src/ui/palette.cpp',
     'src/ui/style.cpp',
+    'src/core/timer_manager.cpp',
+    'src/core/keybind_matcher.cpp',
+    'src/core/key_chord.cpp',
+    'src/wayland/text_input_service.cpp',
+    'src/i18n/i18n.cpp',
+    'src/i18n/i18n_service.cpp',
+    'src/i18n/language_tag.cpp',
     'src/render/gl_shared_context.cpp',
     'src/render/scene/node.cpp',
     'src/render/scene/input_area.cpp',
@@ -1131,7 +1204,7 @@ ui_tree_reconciler_test = executable('ui_tree_reconciler_test',
     'src/theme/fixed_palette.cpp',
     'src/theme/color.cpp',
     'src/theme/contrast.cpp',
-  ) + _protocol_headers,
+  ) + _protocol_headers + _protocol_sources,
   dependencies: [
     wayland_client_dep,
     cairo_dep,
@@ -1139,6 +1212,7 @@ ui_tree_reconciler_test = executable('ui_tree_reconciler_test',
     librsvg_dep,
     libwebp_dep,
     stb_dep,
+    xkbcommon_dep,
   ],
   include_directories: _noctalia_inc,
   cpp_args: [
@@ -1154,6 +1228,7 @@ plugin_manifest_test = executable('plugin_manifest_test',
   sources: files(
     'tests/plugin_manifest_test.cpp',
     'src/scripting/plugin_manifest.cpp',
+    'src/scripting/plugin_panel_shell.cpp',
     'src/core/log.cpp',
   ),
   include_directories: _noctalia_inc,

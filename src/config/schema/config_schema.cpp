@@ -801,6 +801,8 @@ namespace noctalia::config::schema {
         keybindActionField(&KeybindsConfig::right, "right", KeybindAction::Right),
         keybindActionField(&KeybindsConfig::up, "up", KeybindAction::Up),
         keybindActionField(&KeybindsConfig::down, "down", KeybindAction::Down),
+        keybindActionField(&KeybindsConfig::tabNext, "tab_next", KeybindAction::TabNext),
+        keybindActionField(&KeybindsConfig::tabPrevious, "tab_previous", KeybindAction::TabPrevious),
     };
     return s;
   }
@@ -1123,6 +1125,46 @@ namespace noctalia::config::schema {
       return s;
     }
 
+    // Optional strings stored trimmed-or-nullopt, always emitted (value_or("")).
+    Field<DmenuEntryConfig>
+    dmenuOptionalString(std::optional<std::string> DmenuEntryConfig::* member, std::string_view key) {
+      return custom<DmenuEntryConfig>(
+          key,
+          [member, key](const toml::table& tbl, DmenuEntryConfig& out, std::string_view, Diagnostics&) {
+            if (auto v = tbl[key].value<std::string>()) {
+              const std::string trimmed = StringUtils::trim(*v);
+              out.*member = trimmed.empty() ? std::optional<std::string>{} : std::optional<std::string>{trimmed};
+            }
+          },
+          [member, key](toml::table& tbl, const DmenuEntryConfig& in) {
+            tbl.insert_or_assign(key, (in.*member).value_or(""));
+          }
+      );
+    }
+
+    const Schema<DmenuEntryConfig>& dmenuEntrySchema() {
+      static const Schema<DmenuEntryConfig> s = {
+          field(&DmenuEntryConfig::command, "command"),
+          dmenuOptionalString(&DmenuEntryConfig::exec, "exec"),
+          dmenuOptionalString(&DmenuEntryConfig::prefix, "prefix"),
+          dmenuOptionalString(&DmenuEntryConfig::label, "label"),
+          dmenuOptionalString(&DmenuEntryConfig::glyph, "glyph"),
+          field(&DmenuEntryConfig::global, "global"),
+      };
+      return s;
+    }
+
+    const Schema<ShellConfig::LauncherConfig::DmenuConfig>& shellLauncherDmenuSchema() {
+      static const Schema<ShellConfig::LauncherConfig::DmenuConfig> s = {
+          namedMap<ShellConfig::LauncherConfig::DmenuConfig, DmenuEntryConfig>(
+              &ShellConfig::LauncherConfig::DmenuConfig::entries, "entry", dmenuEntrySchema(),
+              [](DmenuEntryConfig& e, std::string_view name) { e.id = std::string(name); },
+              [](const DmenuEntryConfig& e) { return e.id; }
+          ),
+      };
+      return s;
+    }
+
     const Schema<ShellConfig::PanelConfig>& shellPanelSchema() {
       static const Schema<ShellConfig::PanelConfig> s = {
           enumField(&ShellConfig::PanelConfig::transparencyMode, "transparency_mode", kPanelTransparencyModes),
@@ -1133,18 +1175,32 @@ namespace noctalia::config::schema {
           enumField(&ShellConfig::PanelConfig::controlCenterPlacement, "control_center_placement", kPanelPlacements),
           enumField(&ShellConfig::PanelConfig::wallpaperPlacement, "wallpaper_placement", kPanelPlacements),
           enumField(&ShellConfig::PanelConfig::sessionPlacement, "session_placement", kPanelPlacements),
+          enumField(&ShellConfig::PanelConfig::polkitPlacement, "polkit_placement", kPanelPlacements),
+          field(&ShellConfig::PanelConfig::launcherPosition, "launcher_position"),
+          field(&ShellConfig::PanelConfig::clipboardPosition, "clipboard_position"),
+          field(&ShellConfig::PanelConfig::controlCenterPosition, "control_center_position"),
+          field(&ShellConfig::PanelConfig::wallpaperPosition, "wallpaper_position"),
+          field(&ShellConfig::PanelConfig::sessionPosition, "session_position"),
+          field(&ShellConfig::PanelConfig::polkitPosition, "polkit_position"),
           field(&ShellConfig::PanelConfig::floatingOffset, "floating_offset", Range<std::int64_t>{0, 100}),
           field(&ShellConfig::PanelConfig::openNearClickControlCenter, "open_near_click_control_center"),
           field(&ShellConfig::PanelConfig::openNearClickLauncher, "open_near_click_launcher"),
           field(&ShellConfig::PanelConfig::openNearClickClipboard, "open_near_click_clipboard"),
           field(&ShellConfig::PanelConfig::openNearClickWallpaper, "open_near_click_wallpaper"),
           field(&ShellConfig::PanelConfig::openNearClickSession, "open_near_click_session"),
-          field(&ShellConfig::PanelConfig::launcherCategories, "launcher_categories"),
-          field(&ShellConfig::PanelConfig::launcherShowIcons, "launcher_show_icons"),
-          field(&ShellConfig::PanelConfig::launcherCompact, "launcher_compact"),
-          field(&ShellConfig::PanelConfig::launcherAppGrid, "launcher_app_grid"),
-          field(&ShellConfig::PanelConfig::launcherSessionSearch, "launcher_session_search"),
-          field(&ShellConfig::PanelConfig::launcherSortByUsage, "launcher_sort_by_usage"),
+      };
+      return s;
+    }
+
+    const Schema<ShellConfig::LauncherConfig>& shellLauncherSchema() {
+      static const Schema<ShellConfig::LauncherConfig> s = {
+          field(&ShellConfig::LauncherConfig::categories, "categories"),
+          field(&ShellConfig::LauncherConfig::showIcons, "show_icons"),
+          field(&ShellConfig::LauncherConfig::compact, "compact"),
+          field(&ShellConfig::LauncherConfig::appGrid, "app_grid"),
+          field(&ShellConfig::LauncherConfig::sessionSearch, "session_search"),
+          field(&ShellConfig::LauncherConfig::sortByUsage, "sort_by_usage"),
+          subTable(&ShellConfig::LauncherConfig::dmenu, "dmenu", shellLauncherDmenuSchema()),
       };
       return s;
     }
@@ -1237,11 +1293,31 @@ namespace noctalia::config::schema {
                 );
               }
           ),
+          field(&SessionPanelActionConfig::countdownSeconds, "countdown_seconds"),
       };
       return s;
     }
 
     const Schema<typename ShellSessionConfig::ShellSessionPowerConfig>& shellSessionPowerSchema();
+
+    const Schema<ShellGreeterSyncConfig>& shellGreeterSyncSchema() {
+      static const Schema<ShellGreeterSyncConfig> s = {
+          custom<ShellGreeterSyncConfig>(
+              "privilege_command",
+              [](const toml::table& tbl, ShellGreeterSyncConfig& out, std::string_view, Diagnostics&) {
+                if (auto v = tbl["privilege_command"].value<std::string>()) {
+                  out.privilegeCommand = StringUtils::trim(*v);
+                }
+              },
+              [](toml::table& tbl, const ShellGreeterSyncConfig& in) {
+                if (!in.privilegeCommand.empty()) {
+                  tbl.insert_or_assign("privilege_command", in.privilegeCommand);
+                }
+              }
+          ),
+      };
+      return s;
+    }
 
     const Schema<ShellSessionConfig>& shellSessionSchema() {
       static const Schema<ShellSessionConfig> s = {
@@ -1301,11 +1377,13 @@ namespace noctalia::config::schema {
         subTable(&ShellConfig::animation, "animation", shellAnimationSchema()),
         subTable(&ShellConfig::shadow, "shadow", shellShadowSchema()),
         subTable(&ShellConfig::panel, "panel", shellPanelSchema()),
+        subTable(&ShellConfig::launcher, "launcher", shellLauncherSchema()),
         subTable(&ShellConfig::screenCorners, "screen_corners", shellScreenCornersSchema()),
         subTable(&ShellConfig::mpris, "mpris", shellMprisSchema()),
         subTable(&ShellConfig::screenshot, "screenshot", shellScreenshotSchema()),
         subTable(&ShellConfig::privacy, "privacy", shellPrivacySchema()),
         subTable(&ShellConfig::session, "session", shellSessionSchema()),
+        subTable(&ShellConfig::greeterSync, "greeter_sync", shellGreeterSyncSchema()),
     };
     return s;
   }
@@ -1883,6 +1961,7 @@ namespace noctalia::config::schema {
     static const Schema<BarConfig> s = {
         field(&BarConfig::enabled, "enabled"),
         field(&BarConfig::autoHide, "auto_hide"),
+        field(&BarConfig::showOnWorkspaceSwitch, "show_on_workspace_switch"),
         field(&BarConfig::reserveSpace, "reserve_space"),
         barLayerField(),
         field(&BarConfig::thickness, "thickness", kBarThicknessRange),
@@ -1933,6 +2012,7 @@ namespace noctalia::config::schema {
         optionalStringField(&BarMonitorOverride::position, "position"),
         optionalBoolField(&BarMonitorOverride::enabled, "enabled"),
         optionalBoolField(&BarMonitorOverride::autoHide, "auto_hide"),
+        optionalBoolField(&BarMonitorOverride::showOnWorkspaceSwitch, "show_on_workspace_switch"),
         optionalBoolField(&BarMonitorOverride::reserveSpace, "reserve_space"),
         // layer accepts top|overlay; anything else warns and leaves it unset.
         custom<BarMonitorOverride>(

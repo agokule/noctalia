@@ -9,8 +9,6 @@
 #include "i18n/i18n.h"
 #include "render/core/async_texture_cache.h"
 #include "render/core/renderer.h"
-#include "render/render_context.h"
-#include "render/scene/input_area.h"
 #include "render/scene/node.h"
 #include "shell/dock/pinned_apps.h"
 #include "shell/panel/panel_manager.h"
@@ -23,7 +21,6 @@
 #include "ui/style.h"
 #include "util/fuzzy_match.h"
 #include "util/string_utils.h"
-#include "wayland/wayland_connection.h"
 
 #include <algorithm>
 #include <cmath>
@@ -153,9 +150,9 @@ namespace {
   [[nodiscard]] LauncherListStyle launcherListStyleFrom(const ConfigService* config, float scale) {
     LauncherListStyle style{.scale = scale, .appIconColorizeTint = std::nullopt};
     if (config != nullptr) {
-      const auto& panel = config->config().shell.panel;
-      style.showIcons = panel.launcherShowIcons;
-      style.compact = panel.launcherCompact;
+      const auto& launcher = config->config().shell.launcher;
+      style.showIcons = launcher.showIcons;
+      style.compact = launcher.compact;
       style.appIconColorizeTint = effectiveShellAppIconColorizationTint(config->config().shell);
     }
     return style;
@@ -655,17 +652,41 @@ LauncherPanel::LauncherPanel(ConfigService* config, AsyncTextureCache* asyncText
 LauncherPanel::~LauncherPanel() = default;
 
 PanelPlacement LauncherPanel::panelPlacement() const noexcept {
-  return m_config != nullptr ? m_config->config().shell.panel.launcherPlacement : PanelPlacement::Centered;
+  return m_config != nullptr ? m_config->config().shell.panel.launcherPlacement : PanelPlacement::Floating;
 }
 
 void LauncherPanel::addProvider(std::unique_ptr<LauncherProvider> provider) {
   provider->initialize();
   provider->setResultsChangedCallback([this]() { onProviderResultsChanged(); });
+  provider->setQueryRequestedCallback([this](std::string query) { setQuery(std::move(query)); });
+  LauncherProvider* providerPtr = provider.get();
+  provider->setActivationDoneCallback([this, providerPtr](const std::string& resultId) {
+    if (providerPtr->trackUsage()) {
+      m_usageTracker.record(providerPtr->id(), resultId);
+    }
+    PanelManager::instance().closePanel(false);
+  });
   m_providers.push_back(std::move(provider));
 }
 
 void LauncherPanel::clearDynamicProviders() {
   std::erase_if(m_providers, [](const std::unique_ptr<LauncherProvider>& provider) { return provider->isDynamic(); });
+}
+
+void LauncherPanel::clearProvidersWithIdPrefix(std::string_view prefix) {
+  std::erase_if(m_providers, [&](const std::unique_ptr<LauncherProvider>& provider) {
+    return provider->id().starts_with(prefix);
+  });
+}
+
+void LauncherPanel::setScopedProvider(std::string_view providerId, std::string_view placeholder) {
+  m_scopedProviderId = providerId;
+  m_scopedPlaceholder = placeholder;
+  if (m_input != nullptr) {
+    m_input->setPlaceholder(
+        m_scopedPlaceholder.empty() ? i18n::tr("launcher.search-placeholder") : m_scopedPlaceholder
+    );
+  }
 }
 
 void LauncherPanel::create() {
@@ -680,7 +701,7 @@ void LauncherPanel::create() {
   container->addChild(
       ui::input({
           .out = &m_input,
-          .placeholder = i18n::tr("launcher.search-placeholder"),
+          .placeholder = m_scopedPlaceholder.empty() ? i18n::tr("launcher.search-placeholder") : m_scopedPlaceholder,
           .fontSize = Style::fontSizeBody * scale,
           .controlHeight = Style::controlHeight * scale,
           .horizontalPadding = Style::spaceMd * scale,
@@ -779,7 +800,7 @@ void LauncherPanel::refreshLauncherAppIconColorization() {
 }
 
 bool LauncherPanel::shouldUseAppGrid() const {
-  if (m_config == nullptr || !m_config->config().shell.panel.launcherAppGrid || !m_launcherShowIcons) {
+  if (m_config == nullptr || !m_config->config().shell.launcher.appGrid || !m_launcherShowIcons) {
     return false;
   }
   if (m_results.empty()) {
@@ -839,9 +860,9 @@ void LauncherPanel::syncLauncherViewLayout(Renderer* renderer) {
 }
 
 void LauncherPanel::syncLauncherListStyle() {
-  const bool showIcons = m_config == nullptr || m_config->config().shell.panel.launcherShowIcons;
-  const bool compact = m_config != nullptr && m_config->config().shell.panel.launcherCompact;
-  const bool appGrid = m_config != nullptr && m_config->config().shell.panel.launcherAppGrid;
+  const bool showIcons = m_config == nullptr || m_config->config().shell.launcher.showIcons;
+  const bool compact = m_config != nullptr && m_config->config().shell.launcher.compact;
+  const bool appGrid = m_config != nullptr && m_config->config().shell.launcher.appGrid;
   if (showIcons == m_launcherShowIcons
       && compact == m_launcherCompact
       && appGrid == m_launcherAppGrid
@@ -911,7 +932,7 @@ void LauncherPanel::onOpen(std::string_view context) {
   // inotify cannot observe). Cheap stat-only check; only rescans on real change.
   refreshDesktopEntriesIfSourcesChanged();
 
-  m_categoryFilterVisible = m_config != nullptr && m_config->config().shell.panel.launcherCategories;
+  m_categoryFilterVisible = m_config != nullptr && m_config->config().shell.launcher.categories;
   m_activeCategoryType = All;
   m_activeCategory.clear();
   m_currentCategories.clear();
@@ -925,6 +946,9 @@ void LauncherPanel::onOpen(std::string_view context) {
 
   const std::string initialValue(context);
   if (m_input != nullptr) {
+    m_input->setPlaceholder(
+        m_scopedPlaceholder.empty() ? i18n::tr("launcher.search-placeholder") : m_scopedPlaceholder
+    );
     m_input->setValue(initialValue);
   }
   if (m_grid != nullptr) {
@@ -949,6 +973,8 @@ void LauncherPanel::onClose() {
   m_query.clear();
   m_results.clear();
   m_allResults.clear();
+  m_scopedProviderId.clear();
+  m_scopedPlaceholder.clear();
   m_activeCategoryType = All;
   m_activeCategory.clear();
   m_currentCategories.clear();
@@ -1004,6 +1030,17 @@ void LauncherPanel::reapplyCurrentQuery() {
   refreshResults();
 }
 
+void LauncherPanel::setQuery(std::string query) {
+  if (m_input == nullptr) {
+    return;
+  }
+  m_input->setValue(query);
+  if (m_grid != nullptr) {
+    m_grid->scrollView().setScrollOffset(0.0f);
+  }
+  onInputChanged(query);
+}
+
 void LauncherPanel::onProviderResultsChanged() {
   // Only re-gather while the panel is open and built; after onClose the scene
   // nodes are gone and a refresh would touch null grid/label pointers.
@@ -1026,91 +1063,104 @@ void LauncherPanel::onInputChanged(const std::string& text) {
   m_query = text;
   m_allResults.clear();
 
-  // Route query to providers
-  LauncherProvider* activeProvider = nullptr;
-  std::string_view queryText = text;
-
-  // Check for prefix match (longest first)
-  for (auto& provider : m_providers) {
-    auto prefix = provider->prefix();
-    if (prefix.empty()) {
-      continue;
-    }
-    if (text.size() >= prefix.size()
-        && std::string_view(text).starts_with(prefix)
-        && (activeProvider == nullptr || prefix.size() > activeProvider->prefix().size())) {
-      activeProvider = provider.get();
-      queryText = std::string_view(text).substr(prefix.size());
-    }
-  }
-  // Trim leading space after prefix
-  if (activeProvider != nullptr && !queryText.empty() && queryText.front() == ' ') {
-    queryText = queryText.substr(1);
-  }
-
-  const bool typedQuery = !queryText.empty();
-  const bool sortByUsage = m_config != nullptr && m_config->config().shell.panel.launcherSortByUsage;
-
-  auto applyUsageBoost = [&](std::vector<LauncherResult>& results, const LauncherProvider& provider) {
-    if (!sortByUsage) {
-      return;
-    }
-    for (auto& result : results) {
-      const int usageCount = m_usageTracker.getCount(provider.id(), result.id);
-      result.score += usageBoostForScore(result.score, usageCount, typedQuery);
-      result.recentlyUsedIndex = m_usageTracker.getRecentlyUsedIndex(provider.id(), result.id);
-    }
-  };
-
   std::vector<LauncherCategory> newCategories;
-
   bool hasRecentlyUsed = false;
 
-  if (activeProvider != nullptr) {
-    m_allResults = activeProvider->query(queryText);
-    if (activeProvider->trackUsage()) {
-      applyUsageBoost(m_allResults, *activeProvider);
-      if (sortByUsage && m_usageTracker.getRecentlyUsedCount(activeProvider->id()) > 0) {
-        hasRecentlyUsed = true;
-      }
-    }
-    for (auto& result : m_allResults) {
-      result.providerId = activeProvider->id();
-    }
-    sortResultsByScore(m_allResults);
-    newCategories = activeProvider->categories();
-  } else if (startsWithSlash(text)) {
-    m_allResults = providerOverviewResults(text);
-  } else {
-    // Query default providers (empty prefix), plus prefixed providers that opt into global search.
-    // Prefixed opt-in providers (e.g. Session) only contribute once the query is long enough,
-    // so opening the launcher with no/short input does not flood it with their entries.
-    const bool allowGlobalOptIn =
-        StringUtils::trimRightView(StringUtils::trimLeftView(queryText)).size() >= kGlobalOptInMinChars;
+  if (!m_scopedProviderId.empty()) {
     for (auto& provider : m_providers) {
-      const bool isDefault = provider->prefix().empty();
-      if (!isDefault && (!provider->includeInGlobalSearch() || !allowGlobalOptIn)) {
+      if (provider->id() != m_scopedProviderId) {
         continue;
       }
-      auto results = provider->query(queryText);
-      if (provider->trackUsage()) {
-        applyUsageBoost(results, *provider);
-        if (sortByUsage && m_usageTracker.getRecentlyUsedCount(provider->id()) > 0) {
+      m_allResults = provider->query(text);
+      for (auto& result : m_allResults) {
+        result.providerId = provider->id();
+      }
+      sortResultsByScore(m_allResults);
+      break;
+    }
+  } else {
+    // Route query to providers
+    LauncherProvider* activeProvider = nullptr;
+    std::string_view queryText = text;
+
+    // Check for prefix match (longest first)
+    for (auto& provider : m_providers) {
+      auto prefix = provider->prefix();
+      if (prefix.empty()) {
+        continue;
+      }
+      if (text.size() >= prefix.size()
+          && std::string_view(text).starts_with(prefix)
+          && (activeProvider == nullptr || prefix.size() > activeProvider->prefix().size())) {
+        activeProvider = provider.get();
+        queryText = std::string_view(text).substr(prefix.size());
+      }
+    }
+    // Trim leading space after prefix
+    if (activeProvider != nullptr && !queryText.empty() && queryText.front() == ' ') {
+      queryText = queryText.substr(1);
+    }
+
+    const bool typedQuery = !queryText.empty();
+    const bool sortByUsage = m_config != nullptr && m_config->config().shell.launcher.sortByUsage;
+
+    auto applyUsageBoost = [&](std::vector<LauncherResult>& results, const LauncherProvider& provider) {
+      if (!sortByUsage) {
+        return;
+      }
+      for (auto& result : results) {
+        const int usageCount = m_usageTracker.getCount(provider.id(), result.id);
+        result.score += usageBoostForScore(result.score, usageCount, typedQuery);
+        result.recentlyUsedIndex = m_usageTracker.getRecentlyUsedIndex(provider.id(), result.id);
+      }
+    };
+
+    if (activeProvider != nullptr) {
+      m_allResults = activeProvider->query(queryText);
+      if (activeProvider->trackUsage()) {
+        applyUsageBoost(m_allResults, *activeProvider);
+        if (sortByUsage && m_usageTracker.getRecentlyUsedCount(activeProvider->id()) > 0) {
           hasRecentlyUsed = true;
         }
       }
-      for (auto& result : results) {
-        result.providerId = provider->id();
+      for (auto& result : m_allResults) {
+        result.providerId = activeProvider->id();
       }
-      m_allResults.insert(
-          m_allResults.end(), std::make_move_iterator(results.begin()), std::make_move_iterator(results.end())
-      );
-      auto providerCats = provider->categories();
-      for (auto& cat : providerCats) {
-        newCategories.push_back(std::move(cat));
+      sortResultsByScore(m_allResults);
+      newCategories = activeProvider->categories();
+    } else if (startsWithSlash(text)) {
+      m_allResults = providerOverviewResults(text);
+    } else {
+      // Query default providers (empty prefix), plus prefixed providers that opt into global search.
+      // Prefixed opt-in providers (e.g. Session) only contribute once the query is long enough,
+      // so opening the launcher with no/short input does not flood it with their entries.
+      const bool allowGlobalOptIn =
+          StringUtils::trimRightView(StringUtils::trimLeftView(queryText)).size() >= kGlobalOptInMinChars;
+      for (auto& provider : m_providers) {
+        const bool isDefault = provider->prefix().empty();
+        if (!isDefault && (!provider->includeInGlobalSearch() || !allowGlobalOptIn)) {
+          continue;
+        }
+        auto results = provider->query(queryText);
+        if (provider->trackUsage()) {
+          applyUsageBoost(results, *provider);
+          if (sortByUsage && m_usageTracker.getRecentlyUsedCount(provider->id()) > 0) {
+            hasRecentlyUsed = true;
+          }
+        }
+        for (auto& result : results) {
+          result.providerId = provider->id();
+        }
+        m_allResults.insert(
+            m_allResults.end(), std::make_move_iterator(results.begin()), std::make_move_iterator(results.end())
+        );
+        auto providerCats = provider->categories();
+        for (auto& cat : providerCats) {
+          newCategories.push_back(std::move(cat));
+        }
       }
+      sortResultsByScore(m_allResults);
     }
-    sortResultsByScore(m_allResults);
   }
 
   const int iconTargetSize =

@@ -5,10 +5,8 @@
 #include "core/log.h"
 #include "core/process.h"
 #include "core/scoped_timer.h"
+#include "core/timer_manager.h"
 #include "core/ui_phase.h"
-#include "dbus/power/power_profiles_service.h"
-#include "dbus/tray/tray_service.h"
-#include "dbus/upower/upower_service.h"
 #include "idle/idle_inhibitor.h"
 #include "ipc/ipc_service.h"
 #include "render/render_context.h"
@@ -19,12 +17,6 @@
 #include "shell/panel/panel_manager.h"
 #include "shell/surface/shadow.h"
 #include "shell/tooltip/tooltip_manager.h"
-#include "system/easyeffects_service.h"
-#include "system/gamma_service.h"
-#include "system/system_monitor_service.h"
-#include "system/weather_service.h"
-#include "theme/theme_service.h"
-#include "time/time_service.h"
 #include "ui/builders.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -44,6 +36,8 @@
 namespace {
 
   constexpr Logger kLog("bar");
+  constexpr std::chrono::milliseconds kWorkspaceRevealDebounce{80};
+  constexpr std::chrono::milliseconds kWorkspacePeekHold{450};
   constexpr std::int32_t kAutoHideTriggerPx = 3;
   constexpr float kAutoHideSlideExtraPx = 4.0f;
 
@@ -267,8 +261,8 @@ namespace {
     const auto mLeft = static_cast<float>(surface->marginLeft());
     const auto surfW = static_cast<float>(surface->width());
     const auto surfH = static_cast<float>(surface->height());
-    const auto outputW = static_cast<float>(outputInfo.logicalWidth);
-    const auto outputH = static_cast<float>(outputInfo.logicalHeight);
+    const auto outputW = static_cast<float>(outputInfo.effectiveLogicalWidth());
+    const auto outputH = static_cast<float>(outputInfo.effectiveLogicalHeight());
 
     float x = 0.0f;
     float y = 0.0f;
@@ -338,8 +332,7 @@ namespace {
     float anchorX = sx;
     float anchorY = sy;
     if (platform != nullptr && instance.output != nullptr) {
-      if (const auto* out = platform->findOutputByWl(instance.output);
-          out != nullptr && out->logicalWidth > 0 && out->logicalHeight > 0) {
+      if (const auto* out = platform->findOutputByWl(instance.output); out != nullptr && out->hasUsableGeometry()) {
         const auto [surfaceX, surfaceY] = surfaceOriginForOutputLocal(instance, *out);
         anchorX += surfaceX;
         anchorY += surfaceY;
@@ -797,8 +790,8 @@ namespace {
         const float shellCross = capsuleCross;
         const float shellW = isVertical ? shellCross : shellMain;
         const float shellH = isVertical ? shellMain : shellCross;
-        const float contentX = std::round((shellW - iw) * 0.5f);
-        const float contentY = std::round((shellH - ih) * 0.5f);
+        const float contentX = (shellW - iw) * 0.5f;
+        const float contentY = (shellH - ih) * 0.5f;
         shell->setSize(shellW, shellH);
         bg->setVisible(true);
         bg->setPosition(0.0f, 0.0f);
@@ -1189,6 +1182,91 @@ void Bar::closeAllInstances() {
 
 void Bar::onOutputChange() { syncInstances(); }
 
+void Bar::onWorkspaceChanged() {
+  if (m_platform == nullptr || m_overlayDisplaySuppressed) {
+    return;
+  }
+
+  bool anyChanged = false;
+  for (const auto& output : m_platform->outputs()) {
+    std::string activeId;
+    for (const auto& workspace : m_platform->workspaces(output.output)) {
+      if (workspace.active) {
+        activeId = workspace.id;
+        break;
+      }
+    }
+    if (activeId.empty()) {
+      continue;
+    }
+
+    auto& last = m_lastActiveWorkspaceByOutput[output.name];
+    if (!last.empty() && last != activeId) {
+      m_pendingWorkspaceRevealOutputs.insert(output.name);
+      anyChanged = true;
+    }
+    last = activeId;
+  }
+
+  if (!anyChanged) {
+    return;
+  }
+
+  m_workspaceRevealDebounce.start(kWorkspaceRevealDebounce, [this]() { applyPendingWorkspaceReveal(); });
+}
+
+void Bar::applyPendingWorkspaceReveal() {
+  if (m_platform == nullptr) {
+    return;
+  }
+
+  const auto pendingOutputs = std::move(m_pendingWorkspaceRevealOutputs);
+  m_pendingWorkspaceRevealOutputs.clear();
+
+  std::vector<BarInstance*> peeked;
+  peeked.reserve(m_instances.size());
+  for (const std::uint32_t outputName : pendingOutputs) {
+    for (const auto& instanceUp : m_instances) {
+      auto* instance = instanceUp.get();
+      if (instance == nullptr
+          || instance->outputName != outputName
+          || !instance->barConfig.enabled
+          || !instance->barConfig.autoHide
+          || !instance->barConfig.showOnWorkspaceSwitch
+          || instance->surface == nullptr) {
+        continue;
+      }
+
+      revealAutoHideBar(*instance);
+      if (instance->pointerInside) {
+        continue;
+      }
+      const bool suppressAutoHide =
+          (m_autoHideSuppressionCallback != nullptr) ? m_autoHideSuppressionCallback(*instance) : false;
+      if (!suppressAutoHide) {
+        peeked.push_back(instance);
+      }
+    }
+  }
+
+  if (peeked.empty()) {
+    return;
+  }
+
+  m_workspacePeekHideTimer.start(kWorkspacePeekHold, [this, peeked = std::move(peeked)]() {
+    for (BarInstance* instance : peeked) {
+      if (instance == nullptr || !instance->barConfig.autoHide || instance->pointerInside) {
+        continue;
+      }
+      const bool suppressAutoHide =
+          (m_autoHideSuppressionCallback != nullptr) ? m_autoHideSuppressionCallback(*instance) : false;
+      if (!suppressAutoHide) {
+        startHideFadeOut(*instance);
+      }
+    }
+  });
+}
+
 void Bar::refresh() {
   for (auto& inst : m_instances) {
     if (inst->surface != nullptr) {
@@ -1401,13 +1479,11 @@ std::vector<InputRect> Bar::surfaceRectsForOutput(wl_output* output) const {
   if (wlOutput == nullptr) {
     return rects;
   }
-  // logicalWidth/Height become valid only after xdg_output.done; before that
-  // we cannot accurately place a bottom/right anchored bar.
-  if (wlOutput->logicalWidth <= 0 || wlOutput->logicalHeight <= 0) {
+  if (!wlOutput->hasUsableGeometry()) {
     return rects;
   }
-  const std::int32_t outputW = wlOutput->logicalWidth;
-  const std::int32_t outputH = wlOutput->logicalHeight;
+  const std::int32_t outputW = wlOutput->effectiveLogicalWidth();
+  const std::int32_t outputH = wlOutput->effectiveLogicalHeight();
 
   for (const auto& instance : m_instances) {
     if (instance == nullptr || instance->output != output || instance->surface == nullptr) {
@@ -1498,6 +1574,14 @@ bool Bar::canAttachPanelToBar(wl_output* output, std::string_view barName) const
     return false;
   }
   return instance->barConfig.autoHide || instanceEffectivelyVisible(*instance);
+}
+
+std::optional<std::string> Bar::layerForBar(wl_output* output, std::string_view barName) const noexcept {
+  const BarInstance* instance = instanceForBar(output, barName);
+  if (instance == nullptr || instance->surface == nullptr || !instance->barConfig.enabled) {
+    return std::nullopt;
+  }
+  return instance->barConfig.layer;
 }
 
 bool Bar::isAttachedPanelBarSettled(wl_output* output, std::string_view barName) const noexcept {
@@ -1635,7 +1719,8 @@ void Bar::syncInstances() {
 
   // Remove instances for outputs that no longer exist
   std::erase_if(m_instances, [&outputs](const auto& inst) {
-    bool found = std::ranges::contains(outputs, inst->outputName, &WaylandOutput::name);
+    const auto it = std::ranges::find(outputs, inst->outputName, &WaylandOutput::name);
+    const bool found = it != outputs.end() && it->done && it->hasUsableGeometry();
     if (!found) {
       kLog.info("removing instance for output {}", inst->outputName);
     }
@@ -1645,7 +1730,7 @@ void Bar::syncInstances() {
   // Create instances for each bar definition × each output
   for (std::size_t barIdx = 0; barIdx < bars.size(); ++barIdx) {
     for (const auto& output : outputs) {
-      if (!output.done) {
+      if (!output.done || !output.hasUsableGeometry()) {
         continue;
       }
 
@@ -1862,8 +1947,7 @@ void Bar::attachWidgetsToSections(BarInstance& instance) {
           anchorY = *anchorSurfaceY;
         }
         if (m_platform != nullptr && inst->output != nullptr) {
-          if (const auto* out = m_platform->findOutputByWl(inst->output);
-              out != nullptr && out->logicalWidth > 0 && out->logicalHeight > 0) {
+          if (const auto* out = m_platform->findOutputByWl(inst->output); out != nullptr && out->hasUsableGeometry()) {
             const auto [surfaceX, surfaceY] = surfaceOriginForOutputLocal(*inst, *out);
             anchorX += surfaceX;
             anchorY += surfaceY;
@@ -3051,6 +3135,43 @@ std::string Bar::setBarAutoHideIpc(std::string_view args) {
   return "ok\n";
 }
 
+std::string Bar::setBarLayerIpc(std::string_view args) {
+  const auto parts = StringUtils::splitWhitespace(StringUtils::trim(args));
+  if (parts.empty() || parts.size() > 3) {
+    return "error: usage: bar-layer-set <top|overlay> [bar-name] [monitor-selector]\n";
+  }
+
+  const std::string& layer = parts[0];
+  if (layer != "top" && layer != "overlay") {
+    return "error: invalid layer (use top or overlay)\n";
+  }
+
+  std::optional<std::string_view> barName;
+  std::optional<std::string_view> monitorSelector;
+  if (parts.size() >= 2) {
+    barName = parts[1];
+  }
+  if (parts.size() >= 3) {
+    monitorSelector = parts[2];
+  }
+
+  std::vector<BarInstance*> targets;
+  if (const auto collectError = collectBarIpcInstances(barName, monitorSelector, targets)) {
+    return *collectError;
+  }
+
+  const LayerShellLayer shellLayer = layerShellLayerFromConfig(layer);
+  for (BarInstance* instance : targets) {
+    if (instance == nullptr || instance->surface == nullptr) {
+      continue;
+    }
+    instance->surface->setLayer(shellLayer);
+    instance->barConfig.layer = layer;
+  }
+
+  return "ok\n";
+}
+
 void Bar::registerIpc(IpcService& ipc) {
   ipc.registerHandler(
       "bar-show", [this](const std::string& args) -> std::string { return showBarIpc(args); },
@@ -3070,5 +3191,10 @@ void Bar::registerIpc(IpcService& ipc) {
   ipc.registerHandler(
       "bar-auto-hide-set", [this](const std::string& args) -> std::string { return setBarAutoHideIpc(args); },
       "bar-auto-hide-set <on|off|true|false|1|0> [bar-name] [monitor-selector]", "Set auto-hide state for a bar"
+  );
+
+  ipc.registerHandler(
+      "bar-layer-set", [this](const std::string& args) -> std::string { return setBarLayerIpc(args); },
+      "bar-layer-set <top|overlay> [bar-name] [monitor-selector]", "Set one or all bar layers"
   );
 }

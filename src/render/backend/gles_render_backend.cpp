@@ -7,7 +7,6 @@
 #include "render/render_target.h"
 
 #include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
 #include <chrono>
 #include <format>
 #include <stdexcept>
@@ -74,6 +73,13 @@ void main() {
 
   const char* safeCString(const char* value) { return value != nullptr ? value : "unknown"; }
 
+  std::string eglErrorDetail(EGLint error) {
+    if (error == EGL_SUCCESS) {
+      return "no EGL error reported";
+    }
+    return std::format("EGL error 0x{:04x}", static_cast<unsigned>(error));
+  }
+
   bool hasGlExtension(std::string_view name) {
     const char* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
     if (extensions == nullptr || name.empty()) {
@@ -138,10 +144,7 @@ void main() {
             eglCreateWindowSurface(m_display, m_config, reinterpret_cast<EGLNativeWindowType>(m_window), nullptr);
         if (m_surface == EGL_NO_SURFACE && !m_createFailureLogged) {
           const EGLint error = eglGetError();
-          kLog.warn(
-              "eglCreateWindowSurface failed (EGL error 0x{:04x}); will retry before rendering",
-              static_cast<unsigned>(error)
-          );
+          kLog.warn("eglCreateWindowSurface failed ({}); will retry before rendering", eglErrorDetail(error));
           m_createFailureLogged = true;
         } else if (m_surface != EGL_NO_SURFACE) {
           m_createFailureLogged = false;
@@ -156,15 +159,11 @@ void main() {
           if (currentContext != EGL_NO_CONTEXT
               && eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, currentContext) != EGL_TRUE) {
             const EGLint error = eglGetError();
-            kLog.warn(
-                "eglMakeCurrent(EGL_NO_SURFACE) before surface destroy failed (EGL error 0x{:04x})",
-                static_cast<unsigned>(error)
-            );
+            kLog.warn("eglMakeCurrent(EGL_NO_SURFACE) before surface destroy failed ({})", eglErrorDetail(error));
             if (eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) != EGL_TRUE) {
               const EGLint releaseError = eglGetError();
               kLog.warn(
-                  "eglMakeCurrent(EGL_NO_CONTEXT) before surface destroy failed (EGL error 0x{:04x})",
-                  static_cast<unsigned>(releaseError)
+                  "eglMakeCurrent(EGL_NO_CONTEXT) before surface destroy failed ({})", eglErrorDetail(releaseError)
               );
             }
           }
@@ -254,9 +253,7 @@ void GlesRenderBackend::makeCurrentNoSurface() {
   }
 
   if (eglMakeCurrent(m_display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_context) != EGL_TRUE) {
-    throw std::runtime_error(
-        std::format("eglMakeCurrent(EGL_NO_SURFACE) failed (EGL error 0x{:04x})", static_cast<unsigned>(eglGetError()))
-    );
+    throw std::runtime_error(std::format("eglMakeCurrent(EGL_NO_SURFACE) failed ({})", eglErrorDetail(eglGetError())));
   }
 }
 
@@ -267,7 +264,7 @@ bool GlesRenderBackend::makeCurrent(RenderTarget& target) {
     // Same teardown hazard as endFrame's swap: the surface can be invalidated by
     // the compositor and eglMakeCurrent returns EGL_FALSE. Skip the frame rather
     // than killing the shell; genuine context loss is caught via graphicsResetStatus().
-    kLog.warn("eglMakeCurrent failed (EGL error 0x{:04x}); skipping frame", static_cast<unsigned>(eglGetError()));
+    kLog.warn("eglMakeCurrent failed ({}); skipping frame", eglErrorDetail(eglGetError()));
     return false;
   }
   float ms = elapsedSince(start);
@@ -304,7 +301,7 @@ void GlesRenderBackend::endFrame(RenderTarget& target) {
     // eglSwapBuffers returns EGL_FALSE, sometimes with EGL_SUCCESS. Genuine GPU
     // context loss is detected separately via graphicsResetStatus(). Skip this
     // frame instead of killing the shell.
-    kLog.warn("eglSwapBuffers failed (EGL error 0x{:04x}); skipping frame", static_cast<unsigned>(eglGetError()));
+    kLog.warn("eglSwapBuffers failed ({}); skipping frame", eglErrorDetail(eglGetError()));
     return;
   }
   const float ms = elapsedSince(swapStart);
@@ -477,6 +474,14 @@ void GlesRenderBackend::drawSpinner(
   m_spinnerProgram.draw(surfaceWidth, surfaceHeight, width, height, style, transform);
 }
 
+void GlesRenderBackend::drawCountdownRing(
+    float surfaceWidth, float surfaceHeight, float width, float height, const CountdownRingStyle& style,
+    const Mat3& transform
+) {
+  m_countdownRingProgram.ensureInitialized();
+  m_countdownRingProgram.draw(surfaceWidth, surfaceHeight, width, height, style, transform);
+}
+
 void GlesRenderBackend::drawScreenCorner(
     float surfaceWidth, float surfaceHeight, float pixelScaleX, float pixelScaleY, float width, float height,
     const ScreenCornerStyle& style, const Mat3& transform
@@ -597,6 +602,7 @@ void GlesRenderBackend::destroyGpuObjects() {
   m_imageProgram.destroy();
   m_glyphProgram.destroy();
   m_spinnerProgram.destroy();
+  m_countdownRingProgram.destroy();
   m_screenCornerProgram.destroy();
   m_audioSpectrumProgram.destroy();
   m_fancyAudioVisualizerProgram.destroy();

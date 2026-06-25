@@ -4,7 +4,6 @@
 #include "core/file_watcher.h"
 #include "core/timer_manager.h"
 #include "launcher/launcher_provider.h"
-#include "scripting/plugin_runtime_context.h"
 #include "scripting/script_runtime.h"
 
 #include <filesystem>
@@ -18,8 +17,9 @@
 class HttpClient;
 class ClipboardService;
 namespace scripting {
+  struct PluginRuntimeContext;
   class ScriptApiContext;
-}
+} // namespace scripting
 
 struct PluginLauncherProviderOptions {
   std::string displayName;
@@ -51,6 +51,12 @@ public:
   [[nodiscard]] std::vector<LauncherCategory> categories() const override { return m_categories; }
   [[nodiscard]] bool isDynamic() const override { return true; }
   void setResultsChangedCallback(std::function<void()> callback) override { m_onResultsChanged = std::move(callback); }
+  void setQueryRequestedCallback(std::function<void(std::string)> callback) override {
+    m_onQueryRequested = std::move(callback);
+  }
+  void setActivationDoneCallback(std::function<void(std::string)> callback) override {
+    m_onActivationDone = std::move(callback);
+  }
 
   void initialize() override;
   void reset() override;
@@ -85,6 +91,13 @@ private:
   scripting::ScriptRuntime::SubscriberId m_subscription = 0;
   FileWatcher::WatchId m_watchId = 0;
   std::function<void()> m_onResultsChanged;
+  std::function<void(std::string)> m_onQueryRequested;
+  std::function<void(std::string)> m_onActivationDone;
+
+  // An onActivate call is in flight; the panel close waits for its result so the
+  // handler can rewrite the query (keeping the panel open) instead of closing.
+  bool m_pendingActivate = false;
+  std::string m_pendingActivateId;
 
   // query() is const but maintains the async cache: the latest results, the query
   // they answer, and the query last dispatched (to avoid re-sending the same text).

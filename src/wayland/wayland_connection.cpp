@@ -2,6 +2,7 @@
 
 #include "compositors/compositor_detect.h"
 #include "core/log.h"
+#include "core/process_fds.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "dwl-ipc-unstable-v2-client-protocol.h"
 #include "ext-background-effect-v1-client-protocol.h"
@@ -38,9 +39,7 @@
 #include <cstring>
 #include <format>
 #include <stdexcept>
-#include <unordered_set>
 #include <utility>
-#include <wayland-client.h>
 
 namespace {
 
@@ -653,6 +652,10 @@ std::string WaylandConnection::describeDisplayError(int operationErrno) const {
   std::string detail = std::format("display_error={} ({})", displayError, errnoText(displayError));
   if (operationErrno != 0 && operationErrno != displayError) {
     detail += std::format(", operation_errno={} ({})", operationErrno, errnoText(operationErrno));
+  }
+
+  if (displayError == EMFILE || displayError == ENFILE || operationErrno == EMFILE || operationErrno == ENFILE) {
+    detail += std::format(", {}", ProcessFds::describeOpenFileDescriptors());
   }
 
   if (displayError == EPROTO) {

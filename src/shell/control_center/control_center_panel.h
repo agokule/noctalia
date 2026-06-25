@@ -15,6 +15,7 @@
 #include "shell/control_center/tab.h"
 #include "shell/control_center/weather_tab.h"
 #include "shell/panel/panel.h"
+#include "ui/controls/scroll_view.h"
 
 #include <array>
 #include <chrono>
@@ -37,6 +38,8 @@ class IpcService;
 class InputArea;
 class Label;
 class MprisService;
+class Node;
+class RovingListNavHost;
 class NetworkSecretAgent;
 class INetworkService;
 class GammaService;
@@ -72,6 +75,7 @@ public:
   void onClose() override;
   [[nodiscard]] bool dismissTransientUi();
   [[nodiscard]] bool isContextActive(std::string_view context) const override;
+  [[nodiscard]] bool handleGlobalKey(std::uint32_t sym, std::uint32_t modifiers, bool pressed, bool preedit) override;
   [[nodiscard]] bool deferExternalRefresh() const override;
   [[nodiscard]] bool deferPointerRelayout() const override;
   [[nodiscard]] LayerShellLayer layer() const override { return LayerShellLayer::Overlay; }
@@ -127,10 +131,13 @@ private:
   void selectTab(TabId tab, bool animated = false);
   void selectAdjacentVisibleTab(int direction);
   void wireSidebarScroll(InputArea* area);
+  void scrollFocusedInputIntoView(InputArea* area) override;
+  void scrollSidebarNodeIntoView(const Node* node);
   void scheduleMprisRefreshFor(TabId tab);
   void updateTabChrome(TabId tab);
   void applyTabContainerVisibility(TabId activeTab);
   void layoutTabContainers(float bodyWidth, float bodyHeight);
+  void layoutFullSidebarWidth(Renderer& renderer);
   void resetTabContainerTransforms();
   void startTabTransition(TabId from, TabId to);
   void finishTabTransition();
@@ -150,6 +157,9 @@ private:
   // Panel UI structure (rebuilt each create(), nulled in onClose())
   Flex* m_rootLayout = nullptr;
   Flex* m_sidebar = nullptr;
+  ScrollView* m_sidebarScrollView = nullptr;
+  ScrollViewState m_sidebarScrollState{};
+  RovingListNavHost* m_sidebarNav = nullptr;
   InputArea* m_sidebarScrollArea = nullptr;
   Flex* m_content = nullptr;
   InputArea* m_contentDismissArea = nullptr;

@@ -12,13 +12,8 @@
 #include <vector>
 
 class ConfigService;
-class HttpClient;
-class MprisService;
-class PipeWireSpectrum;
 class RenderContext;
-class SystemMonitorService;
 class WaylandConnection;
-class WeatherService;
 struct PointerEvent;
 struct WaylandOutput;
 struct wl_output;
@@ -33,6 +28,7 @@ public:
   void rebuild(const DesktopWidgetsSnapshot& snapshot);
   void onOutputChange();
   void onSecondTick();
+  void requestUpdate();
   void requestLayout();
   void requestRedraw();
   bool onPointerEvent(const PointerEvent& event);

@@ -5,6 +5,8 @@
 #include "dbus/upower/upower_service.h"
 #include "i18n/i18n.h"
 #include "render/render_context.h"
+#include "render/scene/input_area.h"
+#include "render/scene/node.h"
 #include "shell/greeter/greeter_appearance_sync.h"
 #include "shell/profile/avatar_path.h"
 #include "shell/settings/font_family_catalog.h"
@@ -12,7 +14,6 @@
 #include "shell/settings/settings_content.h"
 #include "shell/settings/settings_content_common.h"
 #include "shell/settings/settings_content_plugins.h"
-#include "shell/settings/settings_control_factory.h"
 #include "shell/settings/settings_sidebar.h"
 #include "shell/settings/settings_window.h"
 #include "shell/tooltip/tooltip_manager.h"
@@ -24,6 +25,7 @@
 #include "ui/builders.h"
 #include "ui/controls/select_dropdown_popup.h"
 #include "ui/palette.h"
+#include "ui/scroll_into_view.h"
 #include "ui/style.h"
 #include "util/string_utils.h"
 #include "util/sys_utils.h"
@@ -228,39 +230,41 @@ void SettingsWindow::applyPendingContentScrollTarget(float margin) {
     return;
   }
 
-  const float viewportHeight =
-      std::max(0.0f, m_contentScrollView->height() - m_contentScrollView->viewportPaddingV() * 2.0f);
-  if (viewportHeight <= 0.0f) {
-    clearPending();
+  scrollNodeIntoScrollView(*m_contentScrollView, &m_contentScrollState, *m_pendingContentScrollTarget, margin);
+  clearPending();
+}
+
+void SettingsWindow::scrollSidebarNodeIntoView(const Node* node) {
+  if (node == nullptr || m_sidebarScrollView == nullptr) {
+    return;
+  }
+  scrollNodeIntoScrollView(*m_sidebarScrollView, &m_sidebarScrollState, *node, Style::spaceXs * uiScale());
+}
+
+void SettingsWindow::scrollFocusedAreaIntoView(InputArea* area) {
+  if (area == nullptr) {
     return;
   }
 
-  float targetX = 0.0f;
-  float targetY = 0.0f;
-  float contentX = 0.0f;
-  float contentY = 0.0f;
-  Node::absolutePosition(m_pendingContentScrollTarget, targetX, targetY);
-  Node::absolutePosition(m_contentScrollView->content(), contentX, contentY);
-  (void)targetX;
-  (void)contentX;
-
-  const float targetTop = std::max(0.0f, targetY - contentY - margin);
-  const float targetBottom = targetY - contentY + m_pendingContentScrollTarget->height() + margin;
-  const float currentTop = m_contentScrollView->scrollOffset();
-  const float currentBottom = currentTop + viewportHeight;
-
-  float desiredOffset = currentTop;
-  if (targetBottom - targetTop >= viewportHeight) {
-    desiredOffset = targetTop;
-  } else if (targetTop < currentTop) {
-    desiredOffset = targetTop;
-  } else if (targetBottom > currentBottom) {
-    desiredOffset = targetBottom - viewportHeight;
+  if (m_contentScrollView != nullptr && m_contentScrollView->content() != nullptr) {
+    for (const Node* node = area; node != nullptr; node = node->parent()) {
+      if (node == m_contentScrollView->content()) {
+        m_pendingContentScrollTarget = area;
+        m_scrollToPendingContentTarget = true;
+        applyPendingContentScrollTarget(Style::spaceMd * uiScale());
+        return;
+      }
+    }
   }
 
-  m_contentScrollView->setScrollOffset(desiredOffset);
-  m_contentScrollState.offset = m_contentScrollView->scrollOffset();
-  clearPending();
+  if (m_sidebarScrollView != nullptr && m_sidebarScrollView->content() != nullptr) {
+    for (const Node* node = area; node != nullptr; node = node->parent()) {
+      if (node == m_sidebarScrollView->content()) {
+        scrollSidebarNodeIntoView(area);
+        return;
+      }
+    }
+  }
 }
 
 settings::RegistryEnvironment SettingsWindow::buildRegistryEnvironment() const {
@@ -273,7 +277,8 @@ settings::RegistryEnvironment SettingsWindow::buildRegistryEnvironment() const {
   env.niriOverviewTypeToLaunchSupported = (m_wayland != nullptr && compositors::isNiri());
   env.ddcutilAvailable = (m_dependencies != nullptr && m_dependencies->hasDdcutil());
   env.gammaControlAvailable = (m_wayland != nullptr && m_wayland->hasGammaControl());
-  env.greeterSyncAvailable = greeter::appearanceSyncAvailable();
+  env.greeterSyncAvailable =
+      m_config != nullptr && greeter::appearanceSyncAvailable(m_config->config().shell.greeterSync);
   const ThemeMode previewMode = m_config != nullptr ? m_config->config().theme.mode : ThemeMode::Dark;
   for (const auto& paletteInfo : noctalia::theme::availableCommunityPalettes()) {
     env.communityPalettes.push_back(
@@ -530,6 +535,7 @@ void SettingsWindow::rebuildSettingsContent() {
                   markPluginListDirty();
                   requestSceneRebuild();
                 },
+            .isEnabling = [this](const std::string& id) { return m_pluginManager->isEnabling(id); },
             .addSource = [this]() { openPluginSourceCreateEditor(); },
             .setSourceEnabled =
                 [this](PluginSourceConfig source, bool enabled) {
@@ -576,6 +582,7 @@ std::unique_ptr<Flex> SettingsWindow::buildHeaderRow(float scale) {
           .padding = Style::spaceXs * scale,
           .radius = Style::scaledRadiusMd(scale),
           .onClick = [this]() { openActionsMenu(); },
+          .configure = [](Button& button) { button.setTabStop(false); },
       }),
       ui::button({
           .glyph = "close",
@@ -586,6 +593,7 @@ std::unique_ptr<Flex> SettingsWindow::buildHeaderRow(float scale) {
           .padding = Style::spaceXs * scale,
           .radius = Style::scaledRadiusMd(scale),
           .onClick = [this]() { close(); },
+          .configure = [](Button& button) { button.setTabStop(false); },
       })
   );
 }
@@ -637,6 +645,10 @@ std::unique_ptr<Flex> SettingsWindow::buildFilterRow(
           },
       })
   );
+  m_settingsSearchInput = searchInputPtr;
+  if (searchInputPtr != nullptr && searchInputPtr->inputArea() != nullptr) {
+    searchInputPtr->inputArea()->setTabFocusKey("settings.search");
+  }
   filters->addChild(ui::spacer());
 
   static const bool translatorMode = SysUtils::isEnvFlagOn("NOCTALIA_TRANSLATOR");
@@ -828,8 +840,11 @@ std::unique_ptr<Flex> SettingsWindow::buildBody(
           .requestRebuild = requestRebuild,
           .createBar = createBar,
           .createMonitorOverride = createMonitorOverride,
+          .scrollSidebarNodeIntoView = [this](const Node* node) { scrollSidebarNodeIntoView(node); },
+          .outNav = &m_sidebarNav,
       }
   );
+  m_sidebarScrollView = dynamic_cast<ScrollView*>(sidebar.get());
 
   body->addChild(std::move(sidebar));
   body->addChild(ui::separator());
@@ -1217,6 +1232,9 @@ void SettingsWindow::buildScene(std::uint32_t width, std::uint32_t height) {
       }
       TooltipManager::instance().onHoverChange(next, m_surface->xdgSurface(), output);
     }
+  });
+  m_inputDispatcher.setFocusChangeCallback([this](InputArea* /*old*/, InputArea* next) {
+    scrollFocusedAreaIntoView(next);
   });
   m_inputDispatcher.setSceneRoot(m_sceneRoot.get());
   m_surface->setSceneRoot(m_sceneRoot.get());

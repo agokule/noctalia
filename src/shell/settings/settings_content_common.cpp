@@ -41,6 +41,9 @@ namespace settings {
     if (key == "auto_hide") {
       return override->autoHide.has_value();
     }
+    if (key == "show_on_workspace_switch") {
+      return override->showOnWorkspaceSwitch.has_value();
+    }
     if (key == "reserve_space") {
       return override->reserveSpace.has_value();
     }
@@ -321,7 +324,9 @@ namespace settings {
     if (row.timeoutSeconds <= 0) {
       return i18n::tr("settings.idle.behavior.summary-disabled-timeout", "name", name);
     }
-    return i18n::tr("settings.idle.behavior.summary", "name", name, "seconds", std::to_string(row.timeoutSeconds));
+    return i18n::tr(
+        "settings.idle.behavior.summary", "name", name, "seconds", StringUtils::formatDotDecimal(row.timeoutSeconds)
+    );
   }
 
   std::string notificationFilterRowSummary(const NotificationFilterConfig& filter) {

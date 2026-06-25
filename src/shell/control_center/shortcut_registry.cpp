@@ -9,11 +9,11 @@
 #include "dbus/power/power_profiles_service.h"
 #include "i18n/i18n.h"
 #include "idle/idle_inhibitor.h"
-#include "ipc/ipc_service.h"
 #include "notification/notification_manager.h"
 #include "pipewire/pipewire_service.h"
 #include "scripting/plugin_manifest.h"
 #include "scripting/plugin_registry.h"
+#include "scripting/plugin_runtime_context.h"
 #include "shell/bar/widgets/keyboard_layout_widget.h"
 #include "shell/control_center/plugin_shortcut.h"
 #include "shell/control_center/shortcut_services.h"
@@ -560,6 +560,7 @@ std::unique_ptr<Shortcut> ShortcutRegistry::create(std::string_view type, const 
         .sourcePath = entry->sourcePath,
         .settings = std::move(seeded),
         .scriptApi = *s.scriptApi,
+        .fileWatcher = s.fileWatcher,
         .httpClient = s.httpClient,
         .clipboard = s.clipboard,
         .platform = s.platform,

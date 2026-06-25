@@ -84,7 +84,9 @@ Select::Select() {
     applyVisualState();
     markPaintDirty();
   });
-  triggerArea->setOnKeyDown([this](const InputArea::KeyData& key) { handleKey(key.sym, key.utf32, key.pressed); });
+  triggerArea->setOnKeyDown([this](const InputArea::KeyData& key) {
+    handleKey(key.sym, key.utf32, key.modifiers, key.pressed);
+  });
   m_triggerArea = static_cast<InputArea*>(addChild(std::move(triggerArea)));
 
   applyVisualState();
@@ -305,14 +307,12 @@ LayoutSize Select::doMeasure(Renderer& renderer, const LayoutConstraints& constr
 
 void Select::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 
-void Select::handleKey(std::uint32_t sym, std::uint32_t /*utf32*/, bool pressed) {
+void Select::handleKey(std::uint32_t sym, std::uint32_t /*utf32*/, std::uint32_t modifiers, bool pressed) {
   if (!m_enabled || !pressed) {
     return;
   }
 
-  if (KeybindMatcher::matches(KeybindAction::Down, sym, 0)
-      || KeybindMatcher::matches(KeybindAction::Up, sym, 0)
-      || KeybindMatcher::matches(KeybindAction::Validate, sym, 0)) {
+  if (KeybindMatcher::matches(KeybindAction::Validate, sym, modifiers)) {
     if (!m_open) {
       toggleOpen();
     }
@@ -341,7 +341,7 @@ void Select::applyVisualState() {
     triggerBg = resolved(ColorRole::SurfaceVariant, m_surfaceOpacity);
     triggerBorder = resolved(ColorRole::Hover);
   } else if (triggerFocused) {
-    triggerBorder = resolved(ColorRole::Primary);
+    triggerBorder = resolveColorSpec(focusRingColorSpec());
   }
 
   m_triggerLabel->setColor(triggerText);
@@ -355,7 +355,7 @@ void Select::applyVisualState() {
           .fillMode = FillMode::Solid,
           .radius = Style::scaledRadiusMd(),
           .softness = 1.0f,
-          .borderWidth = Style::borderWidth,
+          .borderWidth = triggerFocused ? Style::focusRingWidth : Style::borderWidth,
       }
   );
 }

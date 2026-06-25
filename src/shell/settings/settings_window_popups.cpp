@@ -4,7 +4,6 @@
 #include "core/deferred_call.h"
 #include "i18n/i18n.h"
 #include "notification/notification_filter.h"
-#include "render/render_context.h"
 #include "scripting/plugin_registry.h"
 #include "shell/settings/bar_widget_editor.h"
 #include "shell/settings/color_spec_picker.h"
@@ -142,7 +141,7 @@ namespace {
 
   std::string idleBehaviorTitle(const IdleBehaviorConfig& row) {
     IdleBehaviorConfig norm = row;
-    inferIdleBehaviorActionFromLegacyFields(norm);
+    normalizeIdleBehaviorAction(norm);
     if (norm.action == "lock") {
       return i18n::tr("settings.idle.behavior.kind.lock");
     }
@@ -634,13 +633,13 @@ void SettingsWindow::openIdleBehaviorEntryEditor(std::size_t index) {
 
   auto rowState = std::make_shared<IdleBehaviorConfig>(cfg.idle.behaviors[index]);
   auto rowKey = std::make_shared<std::string>(rowState->name);
-  inferIdleBehaviorActionFromLegacyFields(*rowState);
+  normalizeIdleBehaviorAction(*rowState);
 
   const auto persist = [this, rowState, rowKey, index]() {
     if (m_config == nullptr) {
       return;
     }
-    inferIdleBehaviorActionFromLegacyFields(*rowState);
+    normalizeIdleBehaviorAction(*rowState);
     auto next = m_config->config().idle.behaviors;
     auto target = std::ranges::find(next, *rowKey, &IdleBehaviorConfig::name);
     if (target == next.end() && index < next.size()) {
@@ -760,7 +759,7 @@ void SettingsWindow::openIdleBehaviorCreateEditor() {
     if (m_config == nullptr) {
       return;
     }
-    inferIdleBehaviorActionFromLegacyFields(*rowState);
+    normalizeIdleBehaviorAction(*rowState);
     auto next = m_config->config().idle.behaviors;
     next.push_back(*rowState);
     normalizeIdleBehaviorNames(next);
@@ -1744,7 +1743,14 @@ void SettingsWindow::openPluginSettingsEditor(std::string pluginId) {
       return;
     }
     const auto* manifest = scripting::PluginRegistry::instance().findManifest(pluginId);
-    if (manifest == nullptr || manifest->settings.empty()) {
+    if (manifest == nullptr) {
+      return;
+    }
+    const bool hasSettings =
+        !manifest->settings.empty() || std::ranges::any_of(manifest->entries, [](const scripting::PluginEntry& entry) {
+          return entry.kind == scripting::PluginEntryKind::Panel && !entry.settings.empty();
+        });
+    if (!hasSettings) {
       return;
     }
 

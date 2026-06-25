@@ -24,7 +24,6 @@
 #include "compositors/triad/triad_workspace_backend.h"
 #include "core/log.h"
 #include "core/process.h"
-#include "dbus/session_bus.h"
 #include "wayland/wayland_connection.h"
 #include "wayland/wayland_workspaces.h"
 
@@ -648,21 +647,32 @@ void CompositorPlatform::setCursorShape(std::uint32_t serial, std::uint32_t shap
 }
 
 wl_output* CompositorPlatform::preferredInteractiveOutput(std::chrono::milliseconds pointerMaxAge) const {
+  const auto outputReady = [this](wl_output* output) {
+    const auto* info = m_wayland.findOutputByWl(output);
+    return info != nullptr && info->done && info->output != nullptr && info->hasUsableGeometry();
+  };
+
   if (compositors::detect() == compositors::CompositorKind::Mango && m_workspaces != nullptr) {
     if (wl_output* ipc = m_workspaces->mangoIpcSelectedOutput(); ipc != nullptr) {
-      return ipc;
+      if (outputReady(ipc)) {
+        return ipc;
+      }
     }
   }
   if (compositors::detect() == compositors::CompositorKind::Dwl && m_workspaces != nullptr) {
     if (wl_output* ipc = m_workspaces->dwlIpcSelectedOutput(); ipc != nullptr) {
-      return ipc;
+      if (outputReady(ipc)) {
+        return ipc;
+      }
     }
   }
 
   if (compositors::isKde() && m_kwinActiveWindow != nullptr) {
     if (const auto focusedName = m_kwinActiveWindow->focusedOutputName(); focusedName.has_value()) {
       if (wl_output* output = resolveOutputName(*focusedName); output != nullptr) {
-        return output;
+        if (outputReady(output)) {
+          return output;
+        }
       }
     }
   }
@@ -673,27 +683,38 @@ wl_output* CompositorPlatform::preferredInteractiveOutput(std::chrono::milliseco
     }
     if (const auto focusedName = backend->focusedOutputName(); focusedName.has_value()) {
       if (wl_output* output = resolveOutputName(*focusedName); output != nullptr) {
-        return output;
+        if (outputReady(output)) {
+          return output;
+        }
       }
     }
   }
 
   if (wl_output* output = m_wayland.activeToplevelOutput(); output != nullptr) {
-    return output;
-  }
-
-  if (wl_surface* keyboardSurface = m_wayland.lastKeyboardSurface(); keyboardSurface != nullptr) {
-    if (wl_output* output = m_wayland.outputForSurface(keyboardSurface); output != nullptr) {
+    if (outputReady(output)) {
       return output;
     }
   }
 
+  if (wl_surface* keyboardSurface = m_wayland.lastKeyboardSurface(); keyboardSurface != nullptr) {
+    if (wl_output* output = m_wayland.outputForSurface(keyboardSurface); output != nullptr) {
+      if (outputReady(output)) {
+        return output;
+      }
+    }
+  }
+
   if (m_wayland.hasFreshPointerOutput(pointerMaxAge)) {
-    return m_wayland.lastPointerOutput();
+    if (wl_output* output = m_wayland.lastPointerOutput(); outputReady(output)) {
+      return output;
+    }
   }
 
   const auto& outputs = m_wayland.outputs();
-  return !outputs.empty() ? outputs.front().output : nullptr;
+  const auto it = std::ranges::find_if(outputs, [](const WaylandOutput& output) {
+    return output.done && output.output != nullptr && output.hasUsableGeometry();
+  });
+  return it != outputs.end() ? it->output : nullptr;
 }
 
 std::optional<ActiveToplevel> CompositorPlatform::activeToplevel() const {
@@ -1141,16 +1162,10 @@ bool CompositorPlatform::supportsTaskbarWorkspaceGrouping() const noexcept {
     return true;
   }
 
-  const auto hasWorkspaceWindowRows = [](const std::vector<WorkspaceWindow>& windows) {
-    return std::ranges::any_of(windows, [](const WorkspaceWindow& window) {
-      return !window.windowId.empty() && !window.workspaceKey.empty();
-    });
-  };
-  if (m_workspaces != nullptr && hasWorkspaceWindowRows(m_workspaces->workspaceWindows(nullptr))) {
+  if (m_workspaces != nullptr && std::string_view(m_workspaces->backendName()) != "none") {
     return true;
   }
-  if (m_workspaceMetadataBackend != nullptr
-      && hasWorkspaceWindowRows(m_workspaceMetadataBackend->workspaceWindows({}))) {
+  if (m_workspaceMetadataBackend != nullptr && !m_workspaceMetadataBackend->workspaceKeys({}).empty()) {
     return true;
   }
   return false;

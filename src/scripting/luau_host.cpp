@@ -4,7 +4,6 @@
 #include "core/deferred_call.h"
 #include "core/log.h"
 #include "core/process.h"
-#include "i18n/i18n_service.h"
 #include "lua.h"
 #include "luacode.h"
 #include "lualib.h"
@@ -17,6 +16,7 @@
 #include "time/time_format.h"
 #include "util/file_utils.h"
 #include "util/fuzzy_match.h"
+#include "util/string_utils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -293,9 +293,59 @@ namespace {
     return 1;
   }
 
+  int luau_outputs(lua_State* L) {
+    auto* host = hostForState(L);
+    if (host == nullptr) {
+      lua_newtable(L);
+      return 1;
+    }
+    const auto outputs = host->api().outputs();
+    lua_createtable(L, static_cast<int>(outputs.size()), 0);
+    int index = 1;
+    for (const auto& out : outputs) {
+      lua_createtable(L, 0, 8);
+      setTableString(L, "name", out.name);
+      setTableString(L, "description", out.description);
+      setTableInteger(L, "width", out.width);
+      setTableInteger(L, "height", out.height);
+      setTableInteger(L, "x", out.x);
+      setTableInteger(L, "y", out.y);
+      setTableInteger(L, "scale", out.scale);
+      setTableBool(L, "focused", out.focused);
+      lua_rawseti(L, -2, index++);
+    }
+    return 1;
+  }
+
+  int luau_setWallpaperEnabled(lua_State* L) {
+    size_t len = 0;
+    const char* connector = luaL_checklstring(L, 1, &len);
+    luaL_checktype(L, 2, LUA_TBOOLEAN);
+    const bool enabled = lua_toboolean(L, 2) != 0;
+    if (auto* host = hostForState(L)) {
+      host->scriptSetWallpaperEnabled(std::string(connector, len), enabled);
+    }
+    return 0;
+  }
+
   int luau_isDarkMode(lua_State* L) {
     auto* host = hostForState(L);
     lua_pushboolean(L, host != nullptr && host->api().isDarkMode() ? 1 : 0);
+    return 1;
+  }
+
+  int luau_wallpaperDirectory(lua_State* L) {
+    auto* host = hostForState(L);
+    if (host == nullptr) {
+      lua_pushnil(L);
+      return 1;
+    }
+    const std::string directory = host->api().wallpaperDirectory();
+    if (directory.empty()) {
+      lua_pushnil(L);
+      return 1;
+    }
+    lua_pushlstring(L, directory.data(), directory.size());
     return 1;
   }
 
@@ -844,6 +894,37 @@ namespace {
       {nullptr, nullptr},
   };
 
+  int luau_string_trim(lua_State* L) {
+    size_t len = 0;
+    const char* str = luaL_checklstring(L, 1, &len);
+    const std::string out = StringUtils::trim(std::string_view(str, len));
+    lua_pushlstring(L, out.data(), out.size());
+    return 1;
+  }
+
+  int luau_string_urlEncode(lua_State* L) {
+    size_t len = 0;
+    const char* str = luaL_checklstring(L, 1, &len);
+    const std::string out = StringUtils::urlEncode(std::string_view(str, len));
+    lua_pushlstring(L, out.data(), out.size());
+    return 1;
+  }
+
+  int luau_string_urlDecode(lua_State* L) {
+    size_t len = 0;
+    const char* str = luaL_checklstring(L, 1, &len);
+    const std::string out = StringUtils::urlDecode(std::string_view(str, len));
+    lua_pushlstring(L, out.data(), out.size());
+    return 1;
+  }
+
+  const luaL_Reg kNoctaliaStringLib[] = {
+      {"trim", luau_string_trim},
+      {"urlEncode", luau_string_urlEncode},
+      {"urlDecode", luau_string_urlDecode},
+      {nullptr, nullptr},
+  };
+
   int luau_fuzzyScore(lua_State* L) {
     size_t patternLen = 0;
     const char* pattern = luaL_checklstring(L, 1, &patternLen);
@@ -869,7 +950,10 @@ namespace {
       {"flatpakAppInstalled", luau_flatpakAppInstalled},
       {"portalAvailable", luau_portalAvailable},
       {"focusedOutputName", luau_focusedOutputName},
+      {"outputs", luau_outputs},
+      {"setWallpaperEnabled", luau_setWallpaperEnabled},
       {"isDarkMode", luau_isDarkMode},
+      {"wallpaperDirectory", luau_wallpaperDirectory},
       {"notify", luau_notify},
       {"notifyError", luau_notifyError},
       {"copyToClipboard", luau_copyToClipboard},
@@ -901,6 +985,10 @@ namespace {
     lua_createtable(L, 0, 0);
     luaL_register(L, nullptr, kNoctaliaJsonLib);
     lua_setfield(L, -2, "json");
+    // noctalia.string = { trim, urlEncode, urlDecode }
+    lua_createtable(L, 0, 0);
+    luaL_register(L, nullptr, kNoctaliaStringLib);
+    lua_setfield(L, -2, "string");
     lua_pop(L, 1);
   }
 } // namespace
@@ -1355,6 +1443,17 @@ void LuauHost::scriptNotifyError(std::string title, std::string body) {
     return;
   }
   notify::error("Noctalia", title, body);
+}
+
+void LuauHost::scriptSetWallpaperEnabled(std::string connector, bool enabled) {
+  if (m_scriptContext != nullptr) {
+    m_scriptContext->sideEffects.push_back(
+        {.kind = scripting::ScriptSideEffectKind::SetWallpaperEnabled,
+         .title = std::move(connector),
+         .body = {},
+         .flag = enabled}
+    );
+  }
 }
 
 bool LuauHost::scriptCopyToClipboard(std::string text, std::string mimeType) {
