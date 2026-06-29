@@ -991,8 +991,10 @@ struct BrightnessService::Impl {
   }
 
   void setBrightness(const std::string& displayId, float value) {
-    if (activeConfig.syncBrightnessOfAllMonitors)
+    if (activeConfig.syncBrightnessOfAllMonitors) {
       setAllBrightness(value);
+      return;
+    }
 
     DisplayInternal* display = findInternal(displayId);
     if (display == nullptr) {
